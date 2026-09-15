@@ -1,5 +1,6 @@
 -- Run in the Supabase SQL editor. Configure the Email OTP template in Supabase Auth.
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create table public.links (
   id uuid primary key default gen_random_uuid(),
@@ -91,8 +92,8 @@ begin
   if exists (select 1 from public.links where owner_id = auth.uid() or partner_id = auth.uid()) then
     raise exception 'Already paired';
   end if;
-  generated := upper(encode(public.gen_random_bytes(6), 'hex'));
-  insert into public.invites(owner_id, code_hash) values (auth.uid(), encode(public.digest(generated, 'sha256'), 'hex'));
+  generated := upper(encode(extensions.gen_random_bytes(6), 'hex'));
+  insert into public.invites(owner_id, code_hash) values (auth.uid(), encode(extensions.digest(generated, 'sha256'), 'hex'));
   return generated;
 end $$;
 
@@ -107,7 +108,7 @@ begin
     raise exception 'Already paired';
   end if;
   select * into chosen from public.invites
-    where code_hash = encode(public.digest(upper(trim(invite_code)), 'sha256'), 'hex')
+    where code_hash = encode(extensions.digest(upper(trim(invite_code)), 'sha256'), 'hex')
       and used_at is null and expires_at > now()
     for update;
   if not found then raise exception 'Code is invalid or expired'; end if;

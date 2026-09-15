@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -50,6 +51,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final noteDraft = TextEditingController();
   final reflection = TextEditingController();
   final notifications = FlutterLocalNotificationsPlugin();
+  static const nearby = MethodChannel('mahila_mitr/nearby');
+  Timer? nearbyTimer;
+  Timer? nearbyPoll;
+  bool nearbyAdvertising = false;
+  bool nearbyScanning = false;
+  bool nearbyScanTimedOut = false;
+  int nearbyScanSeen = 0;
+  final Set<String> nearbyCodes = {};
   StreamSubscription<AuthState>? authSubscription;
   SupabaseClient? get client => supabaseUrl.isEmpty || supabaseKey.isEmpty ? null : Supabase.instance.client;
   String? role;
@@ -82,6 +91,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       refresh();
     });
     _initializeNotifications();
+    nearby.setMethodCallHandler((call) async {
+      if (!mounted) return;
+      if (call.method == 'found' && call.arguments is String && role == 'partner' && link == null) {
+        setState(() => nearbyCodes.add(call.arguments as String));
+      } else if (call.method == 'scanProgress' && call.arguments is int) {
+        setState(() => nearbyScanSeen = call.arguments as int);
+      } else if (call.method == 'error') {
+        setState(() { nearbyAdvertising = false; nearbyScanning = false; });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(call.arguments.toString())));
+      }
+    });
   }
 
   Future<void> _initializeNotifications() async {
@@ -105,6 +125,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     authSubscription?.cancel();
+    nearbyTimer?.cancel();
+    nearbyPoll?.cancel();
+    nearby.setMethodCallHandler(null);
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(nearby.invokeMethod<void>('stopAdvertising').catchError((Object _) {}));
+      unawaited(nearby.invokeMethod<void>('stopScan').catchError((Object _) {}));
+    }
     for (final controller in [email, otp, pairingCode, noteDraft, reflection]) {
       controller.dispose();
     }
@@ -129,6 +156,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ? error.message
               : error is FormatException
                   ? error.message
+                  : error is PlatformException
+                      ? error.message ?? 'Bluetooth is unavailable.'
                   : kDebugMode
                       ? 'Sign-in failed: $error'
                       : 'Could not complete this. Please try again.';
@@ -153,6 +182,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     try {
       final linkRows = await api.from('links').select('id,owner_id,partner_id').limit(1);
       final nextLink = linkRows.isEmpty ? null : Map<String, dynamic>.from(linkRows.first);
+      if (nextLink != null && nearbyAdvertising) {
+        nearbyTimer?.cancel();
+        nearbyPoll?.cancel();
+        await nearby.invokeMethod<void>('stopAdvertising');
+        if (mounted) setState(() => nearbyAdvertising = false);
+      }
       final cycleRows = role == 'owner' || nextLink != null
           ? await api.from('cycles').select('id,start_date,end_date').order('start_date', ascending: false)
           : <Map<String, dynamic>>[];
@@ -208,8 +243,50 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         final value = await client!.rpc('create_invite');
         setState(() => invite = value.toString());
       });
+  Future<void> shareNearby() => action(() async {
+        if (defaultTargetPlatform != TargetPlatform.android) {
+          throw const FormatException('Nearby Bluetooth pairing is currently available on Android phones.');
+        }
+        final value = await client!.rpc('create_invite');
+        final code = value.toString();
+        await nearby.invokeMethod<void>('startAdvertising', {'code': code});
+        nearbyTimer?.cancel();
+        nearbyTimer = Timer(const Duration(minutes: 10), () {
+          nearby.invokeMethod<void>('stopAdvertising');
+          nearbyPoll?.cancel();
+          if (mounted) setState(() => nearbyAdvertising = false);
+        });
+        nearbyPoll?.cancel();
+        nearbyPoll = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
+        setState(() { invite = code; nearbyAdvertising = true; });
+      });
+  Future<void> scanNearby() => action(() async {
+        if (defaultTargetPlatform != TargetPlatform.android) {
+          throw const FormatException('Nearby Bluetooth pairing is currently available on Android phones.');
+        }
+        await nearby.invokeMethod<void>('startScan');
+        nearbyTimer?.cancel();
+        nearbyTimer = Timer(const Duration(seconds: 30), () {
+          nearby.invokeMethod<void>('stopScan');
+          if (mounted) setState(() { nearbyScanning = false; nearbyScanTimedOut = true; });
+        });
+        setState(() { nearbyCodes.clear(); nearbyScanning = true; nearbyScanTimedOut = false; nearbyScanSeen = 0; });
+      });
+  Future<void> stopNearby() async {
+    nearbyTimer?.cancel();
+    nearbyPoll?.cancel();
+    await nearby.invokeMethod<void>(nearbyAdvertising ? 'stopAdvertising' : 'stopScan');
+    if (mounted) setState(() { nearbyAdvertising = false; nearbyScanning = false; });
+  }
+  Future<void> connectNearby(String code) async {
+    pairingCode.text = code;
+    await acceptInvite();
+  }
   Future<void> acceptInvite() => action(() async {
         await client!.rpc('accept_invite', params: {'invite_code': pairingCode.text.trim().toUpperCase()});
+        if (nearbyScanning) await nearby.invokeMethod<void>('stopScan');
+        nearbyTimer?.cancel();
+        if (mounted) setState(() { nearbyScanning = false; nearbyCodes.clear(); });
         await refresh();
       });
   Future<void> unlink() => action(() async {
@@ -307,8 +384,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           if (link == null && owner) ...[
             button('Create pairing code', createInvite),
             if (invite != null) Center(child: Text(invite!, style: const TextStyle(fontSize: 27, fontWeight: FontWeight.bold, letterSpacing: 3, color: plum))),
+            button(nearbyAdvertising ? 'Stop nearby sharing' : 'Share nearby for 10 minutes', nearbyAdvertising ? stopNearby : shareNearby),
           ],
-          if (link == null && !owner) ...[input(pairingCode, 'Pairing code'), button('Connect', acceptInvite)],
+          if (link == null && !owner) ...[
+            input(pairingCode, 'Pairing code'), button('Connect', acceptInvite),
+            button(nearbyScanning ? 'Stop nearby scan' : 'Find nearby partner', nearbyScanning ? stopNearby : scanNearby),
+            if (nearbyScanning) Text('Scanning · $nearbyScanSeen Bluetooth signals seen'),
+            if (nearbyScanTimedOut && nearbyCodes.isEmpty) Text('No Mahila Mitr invitation found. $nearbyScanSeen Bluetooth signals were seen. Keep both apps open and try again.'),
+            for (final code in nearbyCodes) ListTile(
+              title: const Text('Mahila Mitr invitation nearby'),
+              subtitle: const Text('Tap to connect with this person'),
+              trailing: const Icon(Icons.bluetooth),
+              onTap: busy ? null : () => connectNearby(code),
+            ),
+          ],
           if (link != null) TextButton(onPressed: unlink, child: const Text('Disconnect partner')),
         ]),
         if (!owner && link != null) card('Send a little moment', [
