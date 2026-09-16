@@ -9,9 +9,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config.dart';
 
-const plum = Color(0xff70415f);
-const ink = Color(0xff382638);
-const cream = Color(0xfffff8f4);
+const plum = Color(0xff6e4d73);
+const ink = Color(0xff2f233a);
+const cream = Color(0xfffff8f6);
+const rose = Color(0xffe9c7d1);
+const sage = Color(0xffb7c9b3);
+const coral = Color(0xfff28c8c);
+const line = Color(0xffe8dde1);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,10 +33,20 @@ class MahilaMitr extends StatelessWidget {
         title: 'Mahila Mitr',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: plum),
+          colorScheme: ColorScheme.fromSeed(seedColor: plum, surface: cream),
           scaffoldBackgroundColor: cream,
           useMaterial3: true,
+          fontFamily: 'sans-serif',
           textTheme: const TextTheme(bodyMedium: TextStyle(color: ink)),
+          filledButtonTheme: FilledButtonThemeData(
+            style: FilledButton.styleFrom(
+              backgroundColor: plum,
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(48),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
         ),
         home: const HomePage(),
       );
@@ -50,6 +64,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final pairingCode = TextEditingController();
   final noteDraft = TextEditingController();
   final reflection = TextEditingController();
+  final displayNameInput = TextEditingController();
   final notifications = FlutterLocalNotificationsPlugin();
   static const nearby = MethodChannel('mahila_mitr/nearby');
   Timer? nearbyTimer;
@@ -59,14 +74,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool nearbyScanTimedOut = false;
   int nearbyScanSeen = 0;
   final Set<String> nearbyCodes = {};
+  final Map<String, String> nearbyInvitationNames = {};
+  bool refreshing = false;
   StreamSubscription<AuthState>? authSubscription;
-  SupabaseClient? get client => supabaseUrl.isEmpty || supabaseKey.isEmpty ? null : Supabase.instance.client;
+  SupabaseClient? get client => supabaseUrl.isEmpty || supabaseKey.isEmpty
+      ? null
+      : Supabase.instance.client;
   String? role;
   Session? session;
   bool codeSent = false;
   String? pendingEmail;
   bool busy = false;
   bool notificationsReady = false;
+  bool profileChecked = false;
+  String? syncError;
+  String? displayName;
+  String? ownerName;
   String? invite;
   Map<String, dynamic>? link;
   List<Map<String, dynamic>> cycles = [];
@@ -74,6 +97,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<Map<String, dynamic>> ratings = [];
   String noteStyle = 'letter';
   int stars = 5;
+  int tab = 0;
+  int calendarMode = 0;
+  DateTime selectedDay = DateUtils.dateOnly(DateTime.now());
 
   @override
   void initState() {
@@ -90,23 +116,34 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() => role = prefs.getString('role'));
       refresh();
     });
+    nearbyPoll = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (session != null && role != null) refresh();
+    });
     _initializeNotifications();
     nearby.setMethodCallHandler((call) async {
       if (!mounted) return;
-      if (call.method == 'found' && call.arguments is String && role == 'partner' && link == null) {
-        setState(() => nearbyCodes.add(call.arguments as String));
+      if (call.method == 'found' &&
+          call.arguments is String &&
+          role == 'partner' &&
+          link == null) {
+        unawaited(resolveNearbyInvitation(call.arguments as String));
       } else if (call.method == 'scanProgress' && call.arguments is int) {
         setState(() => nearbyScanSeen = call.arguments as int);
       } else if (call.method == 'error') {
-        setState(() { nearbyAdvertising = false; nearbyScanning = false; });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(call.arguments.toString())));
+        setState(() {
+          nearbyAdvertising = false;
+          nearbyScanning = false;
+        });
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(call.arguments.toString())));
       }
     });
   }
 
   Future<void> _initializeNotifications() async {
     try {
-      await notifications.initialize(settings: const InitializationSettings(
+      await notifications.initialize(
+          settings: const InitializationSettings(
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
         iOS: DarwinInitializationSettings(),
       ));
@@ -129,10 +166,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     nearbyPoll?.cancel();
     nearby.setMethodCallHandler(null);
     if (defaultTargetPlatform == TargetPlatform.android) {
-      unawaited(nearby.invokeMethod<void>('stopAdvertising').catchError((Object _) {}));
-      unawaited(nearby.invokeMethod<void>('stopScan').catchError((Object _) {}));
+      unawaited(nearby
+          .invokeMethod<void>('stopAdvertising')
+          .catchError((Object _) {}));
+      unawaited(
+          nearby.invokeMethod<void>('stopScan').catchError((Object _) {}));
     }
-    for (final controller in [email, otp, pairingCode, noteDraft, reflection]) {
+    for (final controller in [
+      email,
+      otp,
+      pairingCode,
+      noteDraft,
+      reflection,
+      displayNameInput
+    ]) {
       controller.dispose();
     }
     super.dispose();
@@ -146,23 +193,26 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } catch (error, stackTrace) {
       debugPrint('Mahila Mitr action failed: $error');
       debugPrintStack(stackTrace: stackTrace);
-      final message = error is AuthException && error.code == 'email_address_not_authorized'
-              ? 'Email sign-in is not available for this address yet.'
-              : error is AuthRetryableFetchException && error.message.contains('Error sending confirmation email')
+      final message = error is AuthException &&
+              error.code == 'email_address_not_authorized'
+          ? 'Email sign-in is not available for this address yet.'
+          : error is AuthRetryableFetchException &&
+                  error.message.contains('Error sending confirmation email')
               ? 'We could not send the email code right now. Please try again later.'
               : error is AuthRetryableFetchException
-              ? 'Could not reach the sign-in service. Check your connection and try again.'
-              : error is AuthException
-              ? error.message
-              : error is FormatException
-                  ? error.message
-                  : error is PlatformException
-                      ? error.message ?? 'Bluetooth is unavailable.'
-                  : kDebugMode
-                      ? 'Sign-in failed: $error'
-                      : 'Could not complete this. Please try again.';
+                  ? 'Could not reach the sign-in service. Check your connection and try again.'
+                  : error is AuthException
+                      ? error.message
+                      : error is FormatException
+                          ? error.message
+                          : error is PlatformException
+                              ? error.message ?? 'Bluetooth is unavailable.'
+                              : kDebugMode
+                                  ? 'Sign-in failed: $error'
+                                  : 'Could not complete this. Please try again.';
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
       }
     } finally {
       if (mounted) setState(() => busy = false);
@@ -178,32 +228,68 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> refresh({bool notify = false}) async {
     final api = client;
-    if (api == null || session == null || role == null) return;
+    if (api == null || session == null || role == null || refreshing) return;
+    refreshing = true;
     try {
-      final linkRows = await api.from('links').select('id,owner_id,partner_id').limit(1);
-      final nextLink = linkRows.isEmpty ? null : Map<String, dynamic>.from(linkRows.first);
+      final profileRows = await api
+          .from('profiles')
+          .select('display_name')
+          .eq('id', session!.user.id)
+          .limit(1);
+      final linkRows =
+          await api.from('links').select('id,owner_id,partner_id').limit(1);
+      final nextLink =
+          linkRows.isEmpty ? null : Map<String, dynamic>.from(linkRows.first);
       if (nextLink != null && nearbyAdvertising) {
         nearbyTimer?.cancel();
-        nearbyPoll?.cancel();
         await nearby.invokeMethod<void>('stopAdvertising');
         if (mounted) setState(() => nearbyAdvertising = false);
       }
       final cycleRows = role == 'owner' || nextLink != null
-          ? await api.from('cycles').select('id,start_date,end_date').order('start_date', ascending: false)
+          ? await api
+              .from('cycles')
+              .select('id,start_date,end_date,flow,symptoms,notes')
+              .order('start_date', ascending: false)
           : <Map<String, dynamic>>[];
       final ratingRows = nextLink != null
-          ? await api.from('date_ratings').select('id,author_id,date_on,stars,reflection').eq('link_id', nextLink['id']).order('date_on', ascending: false)
+          ? await api
+              .from('date_ratings')
+              .select('id,author_id,date_on,stars,reflection')
+              .eq('link_id', nextLink['id'])
+              .order('date_on', ascending: false)
           : <Map<String, dynamic>>[];
       final noteRows = role == 'owner'
-          ? await api.from('notes').select('id,body,style,created_at,opened_at').order('created_at', ascending: false)
+          ? await api
+              .from('notes')
+              .select('id,body,style,created_at,opened_at')
+              .order('created_at', ascending: false)
           : <Map<String, dynamic>>[];
-      final incoming = noteRows.any((item) => item['opened_at'] == null && !notes.any((old) => old['id'] == item['id']));
+      String? nextOwnerName;
+      if (nextLink != null) {
+        final ownerProfiles = await api
+            .from('profiles')
+            .select('display_name')
+            .eq('id', nextLink['owner_id'])
+            .limit(1);
+        if (ownerProfiles.isNotEmpty) {
+          nextOwnerName = ownerProfiles.first['display_name'] as String?;
+        }
+      }
+      final incoming = noteRows.any((item) =>
+          item['opened_at'] == null &&
+          !notes.any((old) => old['id'] == item['id']));
       if (mounted) {
         setState(() {
           link = nextLink;
           cycles = List<Map<String, dynamic>>.from(cycleRows);
           ratings = List<Map<String, dynamic>>.from(ratingRows);
           notes = List<Map<String, dynamic>>.from(noteRows);
+          displayName = profileRows.isEmpty
+              ? null
+              : profileRows.first['display_name'] as String?;
+          ownerName = nextOwnerName;
+          profileChecked = true;
+          syncError = null;
         });
       }
       if (notify && incoming && notificationsReady) {
@@ -217,8 +303,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         );
       }
-    } catch (_) {
-      // Retain the current view and retry when the app is back online.
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          profileChecked = true;
+          syncError =
+              'Could not load your profile and cycle settings. Run the latest Supabase migration, then retry.';
+        });
+      }
+      debugPrint('Mahila Mitr refresh failed: $error');
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  Future<void> resolveNearbyInvitation(String code) async {
+    if (nearbyCodes.contains(code) || link != null) return;
+    if (mounted) setState(() => nearbyCodes.add(code));
+    try {
+      final result =
+          await client!.rpc('preview_invite', params: {'invite_code': code});
+      final name = result?.toString().trim();
+      if (mounted && name != null && name.isNotEmpty) {
+        setState(() => nearbyInvitationNames[code] = name);
+      }
+    } catch (error) {
+      debugPrint('Invitation preview failed: $error');
     }
   }
 
@@ -229,23 +339,258 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           throw const FormatException('Enter a valid email address.');
         }
         await client!.auth.signInWithOtp(email: _normalizedEmail);
-        setState(() { codeSent = true; pendingEmail = _normalizedEmail; });
+        setState(() {
+          codeSent = true;
+          pendingEmail = _normalizedEmail;
+        });
       });
   Future<void> verifyCode() => action(() async {
-        await client!.auth.verifyOTP(email: pendingEmail, token: otp.text.trim(), type: OtpType.email);
+        await client!.auth.verifyOTP(
+            email: pendingEmail, token: otp.text.trim(), type: OtpType.email);
       });
-  Future<void> logPeriod() => action(() async {
-        final today = DateUtils.dateOnly(DateTime.now()).toIso8601String().substring(0, 10);
-        await client!.from('cycles').insert({'owner_id': session!.user.id, 'start_date': today});
+  Future<void> saveProfile() => action(() async {
+        final value = displayNameInput.text.trim();
+        if (value.length < 2 || value.length > 50) {
+          throw const FormatException(
+              'Enter a name between 2 and 50 characters.');
+        }
+        await client!.from('profiles').upsert({
+          'id': session!.user.id,
+          'display_name': value,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        });
+        if (mounted) setState(() => displayName = value);
+      });
+
+  Future<void> showPeriodLogger({Map<String, dynamic>? existing}) async {
+    DateTime? start = existing == null
+        ? null
+        : DateTime.parse(existing['start_date'] as String);
+    DateTime? end = existing?['end_date'] == null
+        ? null
+        : DateTime.parse(existing!['end_date'] as String);
+    var flow = existing?['flow'] as String? ?? 'medium';
+    String? dateError;
+    final symptoms = <String>{
+      ...((existing?['symptoms'] as List?)?.whereType<String>() ?? const [])
+    };
+    final notesController =
+        TextEditingController(text: existing?['notes'] as String? ?? '');
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: cream,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+              22, 18, 22, MediaQuery.viewInsetsOf(context).bottom + 22),
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                      color: line, borderRadius: BorderRadius.circular(4))),
+              const SizedBox(height: 18),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: heading(
+                      'Cycle log',
+                      existing == null ? 'Log your period' : 'Edit period',
+                      existing == null
+                          ? 'Choose the real start date. Nothing is preselected.'
+                          : 'Update any date or detail below.')),
+              if (existing == null)
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(spacing: 8, children: [
+                      ActionChip(
+                          label: const Text('Started today'),
+                          onPressed: () => setSheetState(() {
+                                start = DateUtils.dateOnly(DateTime.now());
+                                dateError = null;
+                              })),
+                      ActionChip(
+                          label: const Text('Started yesterday'),
+                          onPressed: () => setSheetState(() {
+                                start = DateUtils.dateOnly(DateTime.now())
+                                    .subtract(const Duration(days: 1));
+                                dateError = null;
+                              })),
+                    ])),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                    child: dateField('Started', start, () async {
+                  final value = await showDatePicker(
+                      context: context,
+                      initialDate: start ?? DateUtils.dateOnly(DateTime.now()),
+                      firstDate: DateTime(2010),
+                      lastDate: DateUtils.dateOnly(DateTime.now()));
+                  if (value != null) {
+                    setSheetState(() {
+                      start = value;
+                      if (end != null && end!.isBefore(value)) end = null;
+                      dateError = null;
+                    });
+                  }
+                })),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: dateField('Ended', end, () async {
+                  final value = await showDatePicker(
+                      context: context,
+                      initialDate:
+                          end ?? start ?? DateUtils.dateOnly(DateTime.now()),
+                      firstDate: start ?? DateTime(2010),
+                      lastDate: DateUtils.dateOnly(DateTime.now()));
+                  if (value != null) setSheetState(() => end = value);
+                },
+                        clear: end == null
+                            ? null
+                            : () => setSheetState(() => end = null))),
+              ]),
+              if (dateError != null)
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(dateError!,
+                            style: const TextStyle(color: coral)))),
+              const SizedBox(height: 18),
+              const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Flow',
+                      style: TextStyle(fontWeight: FontWeight.w700))),
+              const SizedBox(height: 8),
+              SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'light', label: Text('Light')),
+                    ButtonSegment(value: 'medium', label: Text('Medium')),
+                    ButtonSegment(value: 'heavy', label: Text('Heavy')),
+                  ],
+                  selected: {
+                    flow
+                  },
+                  onSelectionChanged: (value) =>
+                      setSheetState(() => flow = value.first),
+                  showSelectedIcon: false),
+              const SizedBox(height: 18),
+              const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Symptoms',
+                      style: TextStyle(fontWeight: FontWeight.w700))),
+              const SizedBox(height: 8),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                      spacing: 7,
+                      children: [
+                        'Cramps',
+                        'Low energy',
+                        'Headache',
+                        'Mood changes',
+                        'Bloating'
+                      ]
+                          .map((item) => FilterChip(
+                              label: Text(item),
+                              selected: symptoms.contains(item),
+                              onSelected: (selected) => setSheetState(() =>
+                                  selected
+                                      ? symptoms.add(item)
+                                      : symptoms.remove(item))))
+                          .toList())),
+              const SizedBox(height: 12),
+              input(notesController, 'Private notes', lines: 3, maxLength: 500),
+              button('Save period', () {
+                if (start == null) {
+                  setSheetState(
+                      () => dateError = 'Choose when the period started.');
+                  return;
+                }
+                Navigator.pop(sheetContext, true);
+              }),
+              if (existing != null)
+                TextButton(
+                    onPressed: () => Navigator.pop(sheetContext, false),
+                    child: const Text('Delete this entry',
+                        style: TextStyle(color: coral))),
+            ]),
+          ),
+        ),
+      ),
+    );
+    final notes = notesController.text.trim();
+    notesController.dispose();
+    if (saved == null) return;
+    if (saved == false && existing != null) {
+      await action(() async {
+        await client!.from('cycles').delete().eq('id', existing['id']);
         await refresh();
       });
+      return;
+    }
+    await action(() async {
+      final values = {
+        'owner_id': session!.user.id,
+        'start_date': sqlDate(start!),
+        'end_date': end == null ? null : sqlDate(end!),
+        'flow': flow,
+        'symptoms': symptoms.toList(),
+        'notes': notes.isEmpty ? null : notes,
+      };
+      if (existing == null) {
+        await client!.from('cycles').insert(values);
+      } else {
+        await client!.from('cycles').update(values).eq('id', existing['id']);
+      }
+      await refresh();
+    });
+  }
+
+  Widget dateField(String label, DateTime? value, VoidCallback onTap,
+          {VoidCallback? clear}) =>
+      InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: line)),
+          child: Row(children: [
+            const Icon(Icons.calendar_today_outlined, size: 18, color: plum),
+            const SizedBox(width: 8),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(label,
+                      style: TextStyle(
+                          fontSize: 10, color: ink.withValues(alpha: .55))),
+                  Text(value == null ? 'Choose date' : formatDate(value),
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                ])),
+            if (clear != null)
+              IconButton(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: clear,
+                  icon: const Icon(Icons.close, size: 17)),
+          ]),
+        ),
+      );
+
+  String sqlDate(DateTime value) =>
+      DateUtils.dateOnly(value).toIso8601String().substring(0, 10);
   Future<void> createInvite() => action(() async {
         final value = await client!.rpc('create_invite');
         setState(() => invite = value.toString());
       });
   Future<void> shareNearby() => action(() async {
         if (defaultTargetPlatform != TargetPlatform.android) {
-          throw const FormatException('Nearby Bluetooth pairing is currently available on Android phones.');
+          throw const FormatException(
+              'Nearby Bluetooth pairing is currently available on Android phones.');
         }
         final value = await client!.rpc('create_invite');
         final code = value.toString();
@@ -253,62 +598,112 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         nearbyTimer?.cancel();
         nearbyTimer = Timer(const Duration(minutes: 10), () {
           nearby.invokeMethod<void>('stopAdvertising');
-          nearbyPoll?.cancel();
           if (mounted) setState(() => nearbyAdvertising = false);
         });
-        nearbyPoll?.cancel();
-        nearbyPoll = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
-        setState(() { invite = code; nearbyAdvertising = true; });
+        setState(() {
+          invite = code;
+          nearbyAdvertising = true;
+        });
       });
   Future<void> scanNearby() => action(() async {
         if (defaultTargetPlatform != TargetPlatform.android) {
-          throw const FormatException('Nearby Bluetooth pairing is currently available on Android phones.');
+          throw const FormatException(
+              'Nearby Bluetooth pairing is currently available on Android phones.');
         }
-        await nearby.invokeMethod<void>('startScan');
+        setState(() {
+          nearbyCodes.clear();
+          nearbyInvitationNames.clear();
+          nearbyScanning = true;
+          nearbyScanTimedOut = false;
+          nearbyScanSeen = 0;
+        });
+        try {
+          await nearby.invokeMethod<void>('startScan');
+        } catch (_) {
+          if (mounted) setState(() => nearbyScanning = false);
+          rethrow;
+        }
         nearbyTimer?.cancel();
         nearbyTimer = Timer(const Duration(seconds: 30), () {
           nearby.invokeMethod<void>('stopScan');
-          if (mounted) setState(() { nearbyScanning = false; nearbyScanTimedOut = true; });
+          if (mounted) {
+            setState(() {
+              nearbyScanning = false;
+              nearbyScanTimedOut = true;
+            });
+          }
         });
-        setState(() { nearbyCodes.clear(); nearbyScanning = true; nearbyScanTimedOut = false; nearbyScanSeen = 0; });
       });
   Future<void> stopNearby() async {
     nearbyTimer?.cancel();
-    nearbyPoll?.cancel();
-    await nearby.invokeMethod<void>(nearbyAdvertising ? 'stopAdvertising' : 'stopScan');
-    if (mounted) setState(() { nearbyAdvertising = false; nearbyScanning = false; });
+    await nearby
+        .invokeMethod<void>(nearbyAdvertising ? 'stopAdvertising' : 'stopScan');
+    if (mounted) {
+      setState(() {
+        nearbyAdvertising = false;
+        nearbyScanning = false;
+      });
+    }
   }
+
   Future<void> connectNearby(String code) async {
     pairingCode.text = code;
     await acceptInvite();
   }
+
   Future<void> acceptInvite() => action(() async {
-        await client!.rpc('accept_invite', params: {'invite_code': pairingCode.text.trim().toUpperCase()});
+        await client!.rpc('accept_invite',
+            params: {'invite_code': pairingCode.text.trim().toUpperCase()});
         if (nearbyScanning) await nearby.invokeMethod<void>('stopScan');
         nearbyTimer?.cancel();
-        if (mounted) setState(() { nearbyScanning = false; nearbyCodes.clear(); });
+        if (mounted) {
+          setState(() {
+            nearbyScanning = false;
+            nearbyCodes.clear();
+            nearbyInvitationNames.clear();
+          });
+        }
+        for (var attempt = 0; refreshing && attempt < 40; attempt++) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
         await refresh();
       });
   Future<void> unlink() => action(() async {
         await client!.rpc('unlink_partner');
-        setState(() { link = null; notes = []; ratings = []; });
+        setState(() {
+          link = null;
+          notes = [];
+          ratings = [];
+        });
         await refresh();
       });
   Future<void> sendNote() => action(() async {
         if (link == null || noteDraft.text.trim().isEmpty) return;
         await client!.from('notes').insert({
-          'link_id': link!['id'], 'sender_id': session!.user.id,
-          'recipient_id': link!['owner_id'], 'body': noteDraft.text.trim(), 'style': noteStyle,
+          'link_id': link!['id'],
+          'sender_id': session!.user.id,
+          'recipient_id': link!['owner_id'],
+          'body': noteDraft.text.trim(),
+          'style': noteStyle,
         });
         noteDraft.clear();
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Your note was sent.')));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Your note was sent.')));
+        }
       });
   Future<void> rateDate() => action(() async {
         if (link == null) return;
-        final today = DateUtils.dateOnly(DateTime.now()).toIso8601String().substring(0, 10);
+        final today = DateUtils.dateOnly(DateTime.now())
+            .toIso8601String()
+            .substring(0, 10);
         await client!.from('date_ratings').insert({
-          'link_id': link!['id'], 'author_id': session!.user.id, 'date_on': today,
-          'stars': stars, 'reflection': reflection.text.trim().isEmpty ? null : reflection.text.trim(),
+          'link_id': link!['id'],
+          'author_id': session!.user.id,
+          'date_on': today,
+          'stars': stars,
+          'reflection':
+              reflection.text.trim().isEmpty ? null : reflection.text.trim(),
         });
         reflection.clear();
         await refresh();
@@ -317,12 +712,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final style = note['style'] as String? ?? 'letter';
     final design = noteDesign[style] ?? noteDesign['letter']!;
     if (mounted) {
-      await showDialog<void>(context: context, builder: (context) => AlertDialog(
-            backgroundColor: design.color,
-            title: Column(children: [Text(design.icon, style: const TextStyle(fontSize: 52)), Text(design.title)]),
-            content: Text(note['body'] as String, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20)),
-            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
-          ));
+      await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+                backgroundColor: design.color,
+                title: Column(children: [
+                  Text(design.icon, style: const TextStyle(fontSize: 52)),
+                  Text(design.title)
+                ]),
+                content: Text(note['body'] as String,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 20)),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Close'))
+                ],
+              ));
     }
     if (note['opened_at'] == null) {
       await action(() async {
@@ -332,123 +738,982 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Widget card(String title, List<Widget> children, {Color? color}) => Container(
+  Widget card(String title, List<Widget> children,
+          {Color color = Colors.white}) =>
+      Container(
         width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(22),
-        decoration: BoxDecoration(color: color ?? Colors.white, borderRadius: BorderRadius.circular(24)),
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: line),
+        ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold, color: ink)),
-          const SizedBox(height: 10), ...children,
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          ...children,
         ]),
       );
-  Widget button(String label, VoidCallback onPressed) => Padding(
+
+  Widget button(String label, VoidCallback onPressed,
+          {bool secondary = false}) =>
+      Padding(
         padding: const EdgeInsets.only(top: 10),
-        child: SizedBox(width: double.infinity, child: FilledButton(onPressed: busy ? null : onPressed, child: Text(label))),
+        child: SizedBox(
+          width: double.infinity,
+          child: secondary
+              ? OutlinedButton(
+                  onPressed: busy ? null : onPressed, child: Text(label))
+              : FilledButton(
+                  onPressed: busy ? null : onPressed, child: Text(label)),
+        ),
       );
-  Widget input(TextEditingController controller, String label, {TextInputType? keyboard, int lines = 1, int? maxLength}) =>
-      TextField(controller: controller, keyboardType: keyboard, maxLines: lines, maxLength: maxLength,
-          decoration: InputDecoration(labelText: label, filled: true, fillColor: cream, border: OutlineInputBorder(borderRadius: BorderRadius.circular(14))));
+
+  Widget input(TextEditingController controller, String label,
+          {TextInputType? keyboard, int lines = 1, int? maxLength}) =>
+      TextField(
+        controller: controller,
+        keyboardType: keyboard,
+        maxLines: lines,
+        maxLength: maxLength,
+        decoration: InputDecoration(
+          labelText: label,
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: line)),
+        ),
+      );
+
+  Widget heading(String eyebrow, String title, [String? subtitle]) => Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(eyebrow.toUpperCase(),
+              style: const TextStyle(
+                  color: plum,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: .5)),
+          const SizedBox(height: 5),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 28, height: 1.05, fontWeight: FontWeight.w800)),
+          if (subtitle != null)
+            Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(subtitle,
+                    style: TextStyle(color: ink.withValues(alpha: .62)))),
+        ]),
+      );
 
   @override
   Widget build(BuildContext context) {
-    final owner = role == 'owner';
-    return Scaffold(body: SafeArea(child: ListView(padding: const EdgeInsets.all(22), children: [
-      const Text('✿  Mahila Mitr', style: TextStyle(fontSize: 25, color: plum, fontWeight: FontWeight.bold)),
-      const Padding(padding: EdgeInsets.only(top: 8, bottom: 24), child: Text('A gentle space for your cycle and the people you choose.')),
-      if (client == null) card('Setup needed', [const Text('Add your Supabase URL and publishable key with --dart-define to enable sign in and syncing.')]),
-      if (role == null) card('How will you use the app?', [
-        button('Track my cycle', () => chooseRole('owner')),
-        button('Support my partner', () => chooseRole('partner')),
-      ]) else if (session == null) card('Private sign in', [
-        const Text('Enter your email address. We’ll send a one-time code.'),
-        const SizedBox(height: 12),
-        input(email, 'Email address', keyboard: TextInputType.emailAddress),
-        if (codeSent) ...[
-          Text('Code sent to $pendingEmail'),
-          input(otp, 'Email code', keyboard: TextInputType.number),
-          TextButton(onPressed: () => setState(() { codeSent = false; pendingEmail = null; otp.clear(); }), child: const Text('Use a different email')),
+    if (role == null) return roleScreen();
+    if (session == null) return signInScreen();
+    if (!profileChecked) {
+      return const Scaffold(
+          body: Center(child: CircularProgressIndicator(color: plum)));
+    }
+    if (syncError != null) return configurationErrorScreen();
+    if (displayName == null) return profileSetupScreen();
+    final pages = role == 'owner'
+        ? [homeScreen(), insightsScreen(), momentsScreen(), moreScreen()]
+        : [pairingScreen(), insightsScreen(), momentsScreen(), moreScreen()];
+    return Scaffold(
+      body: SafeArea(child: IndexedStack(index: tab, children: pages)),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (value) => setState(() => tab = value),
+        destinations: const [
+          NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home),
+              label: 'Home'),
+          NavigationDestination(
+              icon: Icon(Icons.pie_chart_outline),
+              selectedIcon: Icon(Icons.pie_chart),
+              label: 'Insights'),
+          NavigationDestination(
+              icon: Icon(Icons.favorite_border),
+              selectedIcon: Icon(Icons.favorite),
+              label: 'Moments'),
+          NavigationDestination(icon: Icon(Icons.menu), label: 'More'),
         ],
-        button(codeSent ? 'Verify code' : 'Send code', codeSent ? verifyCode : sendCode),
-      ]) else ...[
-        if (owner) card('Your cycle', [
-          Text(nextPeriodLabel(), style: const TextStyle(fontSize: 29, fontWeight: FontWeight.bold, color: ink)),
-          const Text('Estimated next period · dates can vary'),
-          button('My period started today', logPeriod),
-          const Text('Estimates are approximate and are not contraception guidance.', style: TextStyle(fontSize: 12)),
-        ], color: const Color(0xfff9e4e8)),
-        card(link == null ? 'Connect privately' : 'Partner connected', [
-          Text(link == null
-              ? owner ? 'Pairing shares your period start logs. Create a one-time code for someone you trust.' : 'Enter the code your partner shared with you.'
-              : owner ? 'Your partner can see your period start logs and send creative notes.' : 'You can see period start logs and send thoughtful notes.'),
-          if (link == null && owner) ...[
-            button('Create pairing code', createInvite),
-            if (invite != null) Center(child: Text(invite!, style: const TextStyle(fontSize: 27, fontWeight: FontWeight.bold, letterSpacing: 3, color: plum))),
-            button(nearbyAdvertising ? 'Stop nearby sharing' : 'Share nearby for 10 minutes', nearbyAdvertising ? stopNearby : shareNearby),
-          ],
-          if (link == null && !owner) ...[
-            input(pairingCode, 'Pairing code'), button('Connect', acceptInvite),
-            button(nearbyScanning ? 'Stop nearby scan' : 'Find nearby partner', nearbyScanning ? stopNearby : scanNearby),
-            if (nearbyScanning) Text('Scanning · $nearbyScanSeen Bluetooth signals seen'),
-            if (nearbyScanTimedOut && nearbyCodes.isEmpty) Text('No Mahila Mitr invitation found. $nearbyScanSeen Bluetooth signals were seen. Keep both apps open and try again.'),
-            for (final code in nearbyCodes) ListTile(
-              title: const Text('Mahila Mitr invitation nearby'),
-              subtitle: const Text('Tap to connect with this person'),
-              trailing: const Icon(Icons.bluetooth),
-              onTap: busy ? null : () => connectNearby(code),
-            ),
-          ],
-          if (link != null) TextButton(onPressed: unlink, child: const Text('Disconnect partner')),
-        ]),
-        if (!owner && link != null) card('Send a little moment', [
-          const Text('Choose the feeling your partner will see when opening your note.'),
-          Wrap(spacing: 6, children: noteDesign.entries.map((entry) => ChoiceChip(
-            label: Text('${entry.value.icon} ${entry.value.title}'), selected: noteStyle == entry.key,
-            onSelected: (_) => setState(() => noteStyle = entry.key),
-          )).toList()),
-          input(noteDraft, 'Write something kind', lines: 4, maxLength: 500),
-          button('Send note', sendNote),
-        ]),
-        if (link != null) card('How was your date?', [
-          const Text('Each of you can rate today once. Ratings and reflections are shared.'),
-          Wrap(children: [for (var n = 1; n <= 5; n++) IconButton(
-            onPressed: () => setState(() => stars = n),
-            icon: Icon(n <= stars ? Icons.star : Icons.star_border, color: const Color(0xffd78c48)),
-          )]),
-          input(reflection, 'A favorite moment (optional)', maxLength: 300),
-          button("Save today's rating", rateDate),
-          for (final rating in ratings.take(6)) ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text("${rating['author_id'] == session!.user.id ? 'You' : 'Partner'} · ${rating['date_on']} · ${'★' * (rating['stars'] as int)}"),
-            subtitle: rating['reflection'] == null ? null : Text(rating['reflection'] as String),
-          ),
-        ]),
-        if (owner) card('Your notes', [
-          TextButton(onPressed: () async {
-            await notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestNotificationsPermission();
-            await notifications.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.requestPermissions(alert: true, badge: false, sound: false);
-          }, child: const Text('Enable discreet notifications')),
-          if (notes.isEmpty) const Text('When your partner writes, you’ll find it here.'),
-          for (final note in notes) ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Text(noteDesign[note['style']]?.icon ?? '✉', style: const TextStyle(fontSize: 27)),
-            title: Text(note['opened_at'] == null ? 'A new little surprise' : 'A note from your partner'),
-            subtitle: Text((note['created_at'] as String).substring(0, 10)),
-            onTap: () => openNote(note),
-          ),
-        ]),
-        if ((owner || link != null) && cycles.isNotEmpty) card('Period starts', [
-          for (final cycle in cycles) ListTile(contentPadding: EdgeInsets.zero, title: Text(cycle['start_date'] as String)),
-        ]),
-        TextButton(onPressed: () => action(() async {
-          await client!.auth.signOut();
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.remove('role');
-          setState(() { role = null; link = null; notes = []; ratings = []; cycles = []; });
-        }), child: const Text('Sign out')),
-      ],
-    ])));
+      ),
+    );
   }
+
+  Widget page(List<Widget> children) => ListView(
+      padding: const EdgeInsets.fromLTRB(22, 20, 22, 28), children: children);
+
+  Widget roleScreen() => Scaffold(
+        body: SafeArea(
+          child: page([
+            const SizedBox(height: 44),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text('Mahila Mitr',
+                        style: TextStyle(
+                            fontSize: 34, fontWeight: FontWeight.w800)),
+                    SizedBox(height: 6),
+                    Text('Care that feels private, gentle, and shared.'),
+                  ])),
+              Container(
+                  width: 84,
+                  height: 84,
+                  decoration:
+                      const BoxDecoration(color: rose, shape: BoxShape.circle),
+                  child: const Icon(Icons.favorite, color: plum, size: 38)),
+            ]),
+            const SizedBox(height: 36),
+            roleChoice(
+                Icons.circle_outlined,
+                'I track my cycle',
+                'Log periods, understand patterns, and stay in control.',
+                () => chooseRole('owner')),
+            roleChoice(
+                Icons.favorite,
+                'I’m a support partner',
+                'Be present, send little moments, and support with empathy.',
+                () => chooseRole('partner'),
+                iconColor: coral),
+            card(
+                'Your data stays private.',
+                [
+                  const Text('You choose what is shared.',
+                      style: TextStyle(fontSize: 13))
+                ],
+                color: const Color(0xfffaf0ed)),
+          ]),
+        ),
+      );
+
+  Widget roleChoice(
+          IconData icon, String title, String subtitle, VoidCallback onTap,
+          {Color iconColor = plum}) =>
+      InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: line)),
+          child: Row(children: [
+            CircleAvatar(
+                backgroundColor: iconColor.withValues(alpha: .14),
+                child: Icon(icon, color: iconColor)),
+            const SizedBox(width: 14),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text(subtitle,
+                      style: TextStyle(color: ink.withValues(alpha: .62)))
+                ])),
+            const Icon(Icons.chevron_right, color: plum),
+          ]),
+        ),
+      );
+
+  Widget signInScreen() => Scaffold(
+        body: SafeArea(
+          child: page([
+            const SizedBox(height: 26),
+            heading('Welcome back', 'A private space,\njust for you.',
+                'One-time email verification keeps things simple.'),
+            input(email, 'Email address', keyboard: TextInputType.emailAddress),
+            button('Send verification code', sendCode),
+            if (codeSent) ...[
+              const SizedBox(height: 24),
+              const Center(
+                  child: Text('ENTER 8-DIGIT CODE',
+                      style: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w700))),
+              const SizedBox(height: 10),
+              input(otp, 'Verification code',
+                  keyboard: TextInputType.number, maxLength: 8),
+              button('Verify & continue', verifyCode),
+              TextButton(
+                  onPressed: () => setState(() {
+                        codeSent = false;
+                        pendingEmail = null;
+                        otp.clear();
+                      }),
+                  child: const Text('Use a different email')),
+            ],
+            const SizedBox(height: 82),
+            card(
+                'Secure by design',
+                [
+                  const Text(
+                      'No passwords. No sensitive details in lock-screen notifications.',
+                      style: TextStyle(fontSize: 13))
+                ],
+                color: const Color(0xfffaf0ed)),
+          ]),
+        ),
+      );
+
+  Widget profileSetupScreen() => Scaffold(
+        body: SafeArea(
+          child: page([
+            const SizedBox(height: 42),
+            heading('Your profile', 'What should we call you?',
+                'Your first name is shown only to the person you pair with.'),
+            input(displayNameInput, 'First name', maxLength: 50),
+            button('Save and continue', saveProfile),
+            card(
+                'Private by design',
+                [
+                  const Text(
+                      'Your name is not public and is visible only inside your paired connection.')
+                ],
+                color: sage.withValues(alpha: .25)),
+          ]),
+        ),
+      );
+
+  Widget configurationErrorScreen() => Scaffold(
+        body: SafeArea(
+          child: page([
+            const SizedBox(height: 42),
+            heading('Setup required', 'The latest database update is missing.',
+                syncError),
+            card('Run this migration', [
+              const SelectableText(
+                  'supabase/20260916_profiles_cycle_logging.sql'),
+              button('Retry', refresh),
+            ]),
+          ]),
+        ),
+      );
+
+  Widget homeScreen() {
+    final average = averageCycleLength;
+    final next = predictedNext;
+    return page([
+      Row(children: [
+        Expanded(
+            child: heading('Good morning', displayName ?? 'Your cycle',
+                'Your private patterns at a glance')),
+        CircleAvatar(
+            backgroundColor: rose,
+            child: Text((session?.user.email ?? 'A')[0].toUpperCase(),
+                style:
+                    const TextStyle(color: plum, fontWeight: FontWeight.bold)))
+      ]),
+      card('Next period estimate', [
+        Text(next == null ? 'Add your first period' : formatDate(next),
+            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w800)),
+        if (next != null)
+          Text(
+              '${next.difference(DateUtils.dateOnly(DateTime.now())).inDays} days',
+              style: const TextStyle(color: coral)),
+        button('Log or update a period', showPeriodLogger),
+      ]),
+      Row(children: [
+        metric('$average', 'day cycle'),
+        metric(
+            '${next?.difference(DateUtils.dateOnly(DateTime.now())).inDays ?? '—'}',
+            'days to go'),
+        metric('${cycles.length}', 'past cycles')
+      ]),
+      const SizedBox(height: 18),
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        const Text('Recent periods',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        TextButton(
+            onPressed: () => setState(() => tab = 1),
+            child: const Text('View all ›'))
+      ]),
+      for (var i = 0; i < cycles.take(3).length; i++) periodRow(cycles[i], i),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(
+            child: shortcut(Icons.view_week_outlined, 'Cycle insights',
+                'Patterns & wellness', () => setState(() => tab = 1))),
+        const SizedBox(width: 12),
+        Expanded(
+            child: shortcut(
+                Icons.favorite,
+                link == null ? 'Pair securely' : 'Connected',
+                link == null ? 'With someone you trust' : 'With your partner',
+                () => setState(() => tab = link == null ? 3 : 2),
+                color: sage))
+      ]),
+    ]);
+  }
+
+  Widget metric(String value, String label) => Expanded(
+          child: Column(children: [
+        Text(value,
+            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
+        Text(label,
+            style: TextStyle(fontSize: 12, color: ink.withValues(alpha: .6)))
+      ]));
+
+  Widget periodRow(Map<String, dynamic> cycle, int index) {
+    final start = DateTime.parse(cycle['start_date'] as String);
+    final length = index + 1 < cycles.length
+        ? start
+            .difference(
+                DateTime.parse(cycles[index + 1]['start_date'] as String))
+            .inDays
+        : averageCycleLength;
+    return InkWell(
+        onTap: role == 'owner' ? () => showPeriodLogger(existing: cycle) : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+            margin: const EdgeInsets.only(bottom: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: line)),
+            child: Row(children: [
+              const Icon(Icons.circle, color: coral, size: 10),
+              const SizedBox(width: 10),
+              Expanded(child: Text(formatDate(start))),
+              Text('$length days ›',
+                  style: TextStyle(
+                      fontSize: 12, color: ink.withValues(alpha: .55)))
+            ])));
+  }
+
+  Widget shortcut(
+          IconData icon, String title, String subtitle, VoidCallback onTap,
+          {Color color = rose}) =>
+      InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+              height: 112,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                  color: color.withValues(alpha: .35),
+                  borderRadius: BorderRadius.circular(18)),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Icon(icon, color: plum),
+                    Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(title,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700)),
+                          Text(subtitle, style: const TextStyle(fontSize: 11))
+                        ])
+                  ])));
+
+  Widget insightsScreen() => page([
+        Row(children: [
+          IconButton(
+              onPressed: () => setState(() => tab = 0),
+              icon: const Icon(Icons.chevron_left)),
+          Expanded(
+              child: heading(
+                  'Your history',
+                  calendarMode == 3 ? 'Cycle insights' : 'Cycle calendar',
+                  'Patterns based on your logged history'))
+        ]),
+        SegmentedButton<int>(
+            segments: const [
+              ButtonSegment(value: 0, label: Text('Month')),
+              ButtonSegment(value: 1, label: Text('Week')),
+              ButtonSegment(value: 2, label: Text('Year')),
+              ButtonSegment(value: 3, label: Text('Stats'))
+            ],
+            selected: {
+              calendarMode
+            },
+            onSelectionChanged: (value) =>
+                setState(() => calendarMode = value.first),
+            showSelectedIcon: false),
+        const SizedBox(height: 22),
+        if (calendarMode == 0)
+          monthlyCalendar()
+        else if (calendarMode == 1)
+          weeklyCalendar()
+        else if (calendarMode == 2)
+          yearlyCalendar()
+        else
+          statistics(),
+      ]);
+
+  Widget monthlyCalendar() {
+    final month = DateTime(selectedDay.year, selectedDay.month);
+    final leading = month.weekday - 1;
+    final total = DateUtils.getDaysInMonth(month.year, month.month);
+    return Column(children: [
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        IconButton(
+            onPressed: () => setState(
+                () => selectedDay = DateTime(month.year, month.month - 1, 1)),
+            icon: const Icon(Icons.chevron_left)),
+        Text('${monthName(month.month)} ${month.year}',
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
+        IconButton(
+            onPressed: () => setState(
+                () => selectedDay = DateTime(month.year, month.month + 1, 1)),
+            icon: const Icon(Icons.chevron_right))
+      ]),
+      Row(children: [
+        for (final day in ['M', 'T', 'W', 'T', 'F', 'S', 'S'])
+          Expanded(
+              child: Center(child: Text(day, style: TextStyle(fontSize: 11))))
+      ]),
+      GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: leading + total,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 7),
+          itemBuilder: (_, index) {
+            if (index < leading) return const SizedBox();
+            final date = DateTime(month.year, month.month, index - leading + 1);
+            final logged = isPeriodDay(date);
+            final predicted = isPredictedDay(date);
+            final selected = DateUtils.isSameDay(date, selectedDay);
+            return InkWell(
+                onTap: () => setState(() => selectedDay = date),
+                child: Container(
+                    margin: const EdgeInsets.all(3),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                        color: selected
+                            ? plum
+                            : logged
+                                ? coral
+                                : predicted
+                                    ? rose
+                                    : null,
+                        borderRadius: BorderRadius.circular(12)),
+                    child: Text('${date.day}',
+                        style: TextStyle(
+                            color: selected || logged ? Colors.white : ink,
+                            fontWeight: selected
+                                ? FontWeight.bold
+                                : FontWeight.normal))));
+          }),
+      const SizedBox(height: 12),
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        legend(coral, 'Logged'),
+        SizedBox(width: 16),
+        legend(rose, 'Predicted'),
+        SizedBox(width: 16),
+        legend(sage, 'Fertile window')
+      ]),
+      const SizedBox(height: 20),
+      card(formatLongDate(selectedDay), [
+        Text(isPeriodDay(selectedDay)
+            ? 'Logged period day'
+            : isPredictedDay(selectedDay)
+                ? 'Predicted period window'
+                : 'No cycle event logged')
+      ]),
+    ]);
+  }
+
+  Widget weeklyCalendar() {
+    final monday =
+        selectedDay.subtract(Duration(days: selectedDay.weekday - 1));
+    return Column(children: [
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(
+            '${monday.day}–${monday.add(const Duration(days: 6)).day} ${monthName(monday.month)}',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        Row(children: [
+          IconButton(
+              onPressed: () => setState(() =>
+                  selectedDay = selectedDay.subtract(const Duration(days: 7))),
+              icon: const Icon(Icons.chevron_left)),
+          IconButton(
+              onPressed: () => setState(
+                  () => selectedDay = selectedDay.add(const Duration(days: 7))),
+              icon: const Icon(Icons.chevron_right))
+        ])
+      ]),
+      for (var i = 0; i < 7; i++)
+        Builder(builder: (_) {
+          final date = monday.add(Duration(days: i));
+          final active = DateUtils.isSameDay(date, selectedDay);
+          return ListTile(
+              onTap: () => setState(() => selectedDay = date),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              tileColor: active ? rose.withValues(alpha: .5) : null,
+              leading: CircleAvatar(
+                  backgroundColor: active ? plum : Colors.white,
+                  foregroundColor: active ? Colors.white : ink,
+                  child: Text(weekdayLetter(date.weekday))),
+              title: Text(
+                  '${date.day}   ${isPeriodDay(date) ? 'Period' : isPredictedDay(date) ? 'Predicted' : 'Plan gently'}'),
+              subtitle:
+                  Text(isPeriodDay(date) ? 'Logged cycle day' : 'Upcoming'),
+              trailing: isPeriodDay(date)
+                  ? const Icon(Icons.circle, color: coral, size: 12)
+                  : null);
+        }),
+      card(
+          'A gentle reminder',
+          [
+            const Text(
+                'Cycle predictions are estimates and support awareness—not diagnosis.')
+          ],
+          color: sage.withValues(alpha: .25)),
+    ]);
+  }
+
+  Widget yearlyCalendar() => Column(children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          IconButton(
+              onPressed: () => setState(
+                  () => selectedDay = DateTime(selectedDay.year - 1, 1, 1)),
+              icon: const Icon(Icons.chevron_left)),
+          Text('${selectedDay.year}',
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          IconButton(
+              onPressed: () => setState(
+                  () => selectedDay = DateTime(selectedDay.year + 1, 1, 1)),
+              icon: const Icon(Icons.chevron_right))
+        ]),
+        GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 3,
+            childAspectRatio: 1.15,
+            children: [
+              for (var month = 1; month <= 12; month++)
+                Container(
+                    margin: const EdgeInsets.all(5),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                            color: selectedDay.month == month ? plum : line)),
+                    child: Column(children: [
+                      Text(monthName(month).substring(0, 3).toUpperCase(),
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w700)),
+                      const Spacer(),
+                      Wrap(spacing: 5, runSpacing: 5, children: [
+                        for (var i = 0; i < 8; i++)
+                          CircleAvatar(
+                              radius: 4, backgroundColor: i < 4 ? coral : sage)
+                      ])
+                    ]))
+            ]),
+        card('${cycles.length} logged cycles',
+            [Text('Average $averageCycleLength days')]),
+      ]);
+
+  Widget statistics() {
+    final lengths = cycleLengths.take(6).toList().reversed.toList();
+    return Column(children: [
+      Row(children: [
+        metricCard('$averageCycleLength', 'Average cycle', 'days'),
+        metricCard('$averagePeriodLength', 'Period length', 'days'),
+        metricCard('${regularity.round()}%', 'Regularity', 'stable',
+            color: sage)
+      ]),
+      card('Cycle length trend', [
+        SizedBox(
+            height: 128,
+            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              for (final length in lengths)
+                Expanded(
+                    child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 5),
+                        child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Expanded(
+                                  child: Align(
+                                      alignment: Alignment.bottomCenter,
+                                      child: Container(
+                                          height: 32.0 +
+                                              (length.clamp(20, 40) - 20) * 3,
+                                          decoration: BoxDecoration(
+                                              color: length == lengths.last
+                                                  ? plum
+                                                  : rose,
+                                              borderRadius:
+                                                  BorderRadius.circular(8))))),
+                              Text('$length',
+                                  style: const TextStyle(fontSize: 11))
+                            ])))
+            ]))
+      ]),
+      Row(children: [
+        Expanded(
+            child: card('Prediction', [
+          const Text('High',
+              style: TextStyle(
+                  fontSize: 22,
+                  color: Color(0xff6d8b70),
+                  fontWeight: FontWeight.w800)),
+          const Text('confidence', style: TextStyle(fontSize: 12))
+        ])),
+        const SizedBox(width: 10),
+        Expanded(
+            child: card('History', [
+          Text('${cycles.length} cycles',
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const Text('improves estimates', style: TextStyle(fontSize: 12))
+        ]))
+      ]),
+      card(
+          'Insights support awareness—not diagnosis.',
+          [
+            const Text('Predictions improve as you log consistently.',
+                style: TextStyle(fontSize: 12))
+          ],
+          color: const Color(0xfffaf0ed)),
+    ]);
+  }
+
+  Widget metricCard(String value, String label, String footer,
+          {Color color = rose}) =>
+      Expanded(
+          child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+              decoration: BoxDecoration(
+                  color: color.withValues(alpha: .3),
+                  borderRadius: BorderRadius.circular(16)),
+              child: Column(children: [
+                Text(value,
+                    style: const TextStyle(
+                        fontSize: 21, fontWeight: FontWeight.w800)),
+                Text(label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11)),
+                Text(footer,
+                    style: TextStyle(
+                        fontSize: 10, color: ink.withValues(alpha: .5)))
+              ])));
+
+  Widget momentsScreen() => page([
+        heading(
+            'A closer you',
+            role == 'owner'
+                ? 'Little Moments'
+                : 'For ${ownerName ?? 'your partner'}',
+            role == 'owner'
+                ? 'Thoughtful notes. Small surprises.'
+                : 'Create something kind for your partner.'),
+        if (role == 'partner' && link != null) ...[
+          Wrap(
+              spacing: 8,
+              children: noteDesign.entries
+                  .map((entry) => ChoiceChip(
+                      label: Text('${entry.value.icon} ${entry.value.title}'),
+                      selected: noteStyle == entry.key,
+                      onSelected: (_) => setState(() => noteStyle = entry.key)))
+                  .toList()),
+          const SizedBox(height: 16),
+          input(noteDraft, 'Write something kind', lines: 5, maxLength: 500),
+          button('Create a moment', sendNote),
+        ] else if (role == 'owner') ...[
+          if (notes.isEmpty)
+            card('No moments yet',
+                [const Text('When your partner writes, you’ll find it here.')]),
+          for (final note in notes)
+            ListTile(
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                tileColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: const BorderSide(color: line)),
+                leading: CircleAvatar(
+                    backgroundColor:
+                        (noteDesign[note['style']] ?? noteDesign['letter']!)
+                            .color,
+                    child: Text(noteDesign[note['style']]?.icon ?? '✉')),
+                title: Text(note['opened_at'] == null
+                    ? 'A new little surprise'
+                    : 'A little note for you'),
+                subtitle: const Text('From your partner'),
+                trailing: Text((note['created_at'] as String).substring(0, 10),
+                    style: const TextStyle(fontSize: 10)),
+                onTap: () => openNote(note)),
+          const SizedBox(height: 14),
+          button('Enable discreet notifications', requestNotificationPermission,
+              secondary: true),
+        ] else
+          card('Pair first', [
+            const Text('Connect securely before sharing moments.'),
+            button('Go to pairing', () => setState(() => tab = 3))
+          ]),
+        if (link != null) reflectionsCard(),
+      ]);
+
+  Widget reflectionsCard() => card('How was your day?', [
+        Row(children: [
+          for (var n = 1; n <= 5; n++)
+            Expanded(
+                child: IconButton(
+                    onPressed: () => setState(() => stars = n),
+                    icon: Icon(n <= stars ? Icons.star : Icons.star_border,
+                        color: coral)))
+        ]),
+        input(reflection, 'Add a note (optional)', lines: 3, maxLength: 300),
+        button('Save reflection', rateDate),
+        if (ratings.isNotEmpty)
+          const Padding(
+              padding: EdgeInsets.only(top: 18, bottom: 4),
+              child: Text('Recent reflections',
+                  style: TextStyle(fontWeight: FontWeight.w700))),
+        for (final rating in ratings.take(5))
+          ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: CircleAvatar(
+                  child: Text(
+                      rating['author_id'] == session!.user.id ? 'Y' : 'P')),
+              title: Text(
+                  rating['author_id'] == session!.user.id ? 'You' : 'Partner'),
+              subtitle: Text(rating['reflection'] as String? ??
+                  'Shared ${rating['stars']} stars')),
+      ]);
+
+  Widget pairingScreen() => page([
+        heading(
+            'Private pairing',
+            link == null
+                ? 'Connect with your\npartner'
+                : 'Connected with ${ownerName ?? 'your partner'}',
+            'One private connection. Always your choice.'),
+        if (link == null && role == 'owner') ...[
+          card('Your invite code', [
+            if (invite == null)
+              const Text('Create a one-time code that expires in 10 minutes.')
+            else
+              Center(
+                  child: Text(invite!,
+                      style: const TextStyle(
+                          fontSize: 24,
+                          letterSpacing: 4,
+                          fontWeight: FontWeight.w800))),
+            button('Create invite code', createInvite),
+            Row(children: [
+              Expanded(
+                  child: button(
+                      nearbyAdvertising ? 'Stop sharing' : 'Share nearby',
+                      nearbyAdvertising ? stopNearby : shareNearby,
+                      secondary: true))
+            ])
+          ]),
+        ] else if (link == null) ...[
+          card('Enter a code', [
+            input(pairingCode, '12-character invite code'),
+            button('Connect securely', acceptInvite),
+            button(nearbyScanning ? 'Stop nearby scan' : 'Scan nearby',
+                nearbyScanning ? stopNearby : scanNearby,
+                secondary: true),
+            if (nearbyScanning)
+              Text('Scanning · $nearbyScanSeen Bluetooth signals seen'),
+            for (final code in nearbyCodes)
+              ListTile(
+                  title: Text(nearbyInvitationNames[code] == null
+                      ? 'Finding her name…'
+                      : '${nearbyInvitationNames[code]} is nearby'),
+                  subtitle: const Text('Tap to connect securely'),
+                  trailing: const Icon(Icons.bluetooth),
+                  onTap: busy ? null : () => connectNearby(code))
+          ]),
+        ] else
+          card('Connected privately with ${ownerName ?? 'your partner'}', [
+            Text(role == 'owner'
+                ? 'Your partner can support you with notes and shared reflections.'
+                : 'You can view shared cycle timing and send thoughtful moments.'),
+            button('Disconnect partner', unlink, secondary: true)
+          ]),
+        card(
+            'Private by design',
+            [
+              const Text(
+                  'Codes are hashed, expire in 10 minutes, and can only be used once.')
+            ],
+            color: sage.withValues(alpha: .25)),
+      ]);
+
+  Widget moreScreen() => page([
+        heading(
+            'Your space', 'More', 'Pairing, privacy, and account controls.'),
+        if (tab == 3) pairingScreenContent(),
+        card('Account', [
+          Text(displayName ?? '',
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          Text(session?.user.email ?? ''),
+          button('Edit profile name', () {
+            displayNameInput.text = displayName ?? '';
+            setState(() => displayName = null);
+          }, secondary: true),
+          button('Sign out', signOut, secondary: true)
+        ]),
+      ]);
+
+  Widget pairingScreenContent() => Column(children: [
+        if (link == null)
+          button(
+              'Open secure pairing',
+              () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => Scaffold(
+                      appBar: AppBar(backgroundColor: cream),
+                      body: SafeArea(child: pairingScreen())))))
+        else
+          card('Connected with ${ownerName ?? 'your partner'}', [
+            const Text('Your private connection is active.'),
+            button('Disconnect partner', unlink, secondary: true)
+          ])
+      ]);
+
+  Future<void> requestNotificationPermission() async {
+    await notifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+    await notifications
+        .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(alert: true, badge: false, sound: false);
+  }
+
+  Future<void> signOut() => action(() async {
+        await client!.auth.signOut();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('role');
+        setState(() {
+          role = null;
+          link = null;
+          notes = [];
+          ratings = [];
+          cycles = [];
+          tab = 0;
+          displayName = null;
+          ownerName = null;
+          profileChecked = false;
+          syncError = null;
+        });
+      });
+
+  int get averageCycleLength {
+    final lengths = cycleLengths;
+    return lengths.isEmpty
+        ? 28
+        : (lengths.reduce((a, b) => a + b) / lengths.length)
+            .round()
+            .clamp(21, 45);
+  }
+
+  List<int> get cycleLengths {
+    final values = <int>[];
+    for (var i = 0; i + 1 < cycles.length; i++) {
+      final recent = DateTime.parse(cycles[i]['start_date'] as String);
+      final older = DateTime.parse(cycles[i + 1]['start_date'] as String);
+      final days = recent.difference(older).inDays;
+      if (days >= 15 && days <= 60) values.add(days);
+    }
+    return values;
+  }
+
+  int get averagePeriodLength {
+    final values = cycles
+        .where((cycle) => cycle['end_date'] != null)
+        .map((cycle) =>
+            DateTime.parse(cycle['end_date'] as String)
+                .difference(DateTime.parse(cycle['start_date'] as String))
+                .inDays +
+            1)
+        .toList();
+    return values.isEmpty
+        ? 5
+        : (values.reduce((a, b) => a + b) / values.length).round();
+  }
+
+  double get regularity {
+    final lengths = cycleLengths;
+    if (lengths.length < 2) return lengths.isEmpty ? 0 : 100;
+    final spread = lengths.reduce((a, b) => a > b ? a : b) -
+        lengths.reduce((a, b) => a < b ? a : b);
+    return (100 - spread * 4).clamp(0, 100).toDouble();
+  }
+
+  DateTime? get predictedNext => cycles.isEmpty
+      ? null
+      : DateTime.parse(cycles.first['start_date'] as String)
+          .add(Duration(days: averageCycleLength));
+
+  bool isPeriodDay(DateTime date) => cycles.any((cycle) {
+        final start = DateTime.parse(cycle['start_date'] as String);
+        final end = cycle['end_date'] == null
+            ? start.add(Duration(days: averagePeriodLength - 1))
+            : DateTime.parse(cycle['end_date'] as String);
+        return !date.isBefore(start) && !date.isAfter(end);
+      });
+
+  bool isPredictedDay(DateTime date) {
+    final next = predictedNext;
+    return next != null &&
+        !date.isBefore(next) &&
+        date.isBefore(next.add(Duration(days: averagePeriodLength)));
+  }
+
+  static Widget legend(Color color, String label) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        CircleAvatar(radius: 4, backgroundColor: color),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 10))
+      ]);
+  static const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December'
+  ];
+  String monthName(int month) => months[month - 1];
+  String weekdayLetter(int weekday) =>
+      const ['M', 'T', 'W', 'T', 'F', 'S', 'S'][weekday - 1];
+  String formatDate(DateTime date) =>
+      '${date.day} ${monthName(date.month)} ${date.year}';
+  String formatLongDate(DateTime date) => '${const [
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday'
+      ][date.weekday - 1]}, ${formatDate(date)}';
 
   String nextPeriodLabel() {
     if (cycles.isEmpty) return 'Add your first period';
