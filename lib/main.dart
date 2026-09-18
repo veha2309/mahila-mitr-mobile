@@ -95,6 +95,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<Map<String, dynamic>> cycles = [];
   List<Map<String, dynamic>> notes = [];
   List<Map<String, dynamic>> ratings = [];
+  List<Map<String, dynamic>> dayLogs = [];
+
+  static const moodMeta = <String, ({String label, String emoji, Color color})>{
+    'happy': (label: 'Happy', emoji: '😊', color: Color(0xfffbe3e8)),
+    'calm': (label: 'Calm', emoji: '🌿', color: Color(0xffe8f2e6)),
+    'energetic': (label: 'Energetic', emoji: '⚡', color: Color(0xfffff3d6)),
+    'sad': (label: 'Low', emoji: '😢', color: Color(0xffe9e5f5)),
+    'irritable': (label: 'Irritable', emoji: '😤', color: Color(0xfffde8e4)),
+    'anxious': (label: 'Anxious', emoji: '😰', color: Color(0xffe2e9f0)),
+  };
+
+  static const flowMeta = <String, ({String label, String icon})>{
+    'none': (label: 'No flow', icon: '○'),
+    'spotting': (label: 'Spotting', icon: '💧'),
+    'light': (label: 'Light', icon: '🩸'),
+    'medium': (label: 'Medium', icon: '🩸🩸'),
+    'heavy': (label: 'Heavy', icon: '🩸🩸🩸'),
+  };
+
+  static const energyMeta = <String, ({String label, String icon})>{
+    'high': (label: 'High', icon: '⚡'),
+    'normal': (label: 'Balanced', icon: '🌱'),
+    'low': (label: 'Low', icon: '🌙'),
+  };
+
+  Map<String, dynamic>? dayLogFor(DateTime date) {
+    final key = sqlDate(date);
+    for (final log in dayLogs) {
+      if (log['date_on'] == key) return log;
+    }
+    return null;
+  }
+
+  bool hasDayLog(DateTime date) => dayLogFor(date) != null;
   String noteStyle = 'letter';
   int stars = 5;
   int tab = 0;
@@ -264,6 +298,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               .select('id,body,style,created_at,opened_at')
               .order('created_at', ascending: false)
           : <Map<String, dynamic>>[];
+      List<Map<String, dynamic>> dayLogRows = [];
+      try {
+        if (role == 'owner' || nextLink != null) {
+          final rows = await api
+              .from('day_logs')
+              .select('id,owner_id,date_on,mood,flow,energy,symptoms,note')
+              .order('date_on', ascending: false);
+          dayLogRows = List<Map<String, dynamic>>.from(rows);
+        }
+      } catch (e) {
+        debugPrint('day_logs query skipped or table not created yet: $e');
+      }
       String? nextOwnerName;
       if (nextLink != null) {
         final ownerProfiles = await api
@@ -284,6 +330,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           cycles = List<Map<String, dynamic>>.from(cycleRows);
           ratings = List<Map<String, dynamic>>.from(ratingRows);
           notes = List<Map<String, dynamic>>.from(noteRows);
+          dayLogs = dayLogRows;
           displayName = profileRows.isEmpty
               ? null
               : profileRows.first['display_name'] as String?;
@@ -544,6 +591,204 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       } else {
         await client!.from('cycles').update(values).eq('id', existing['id']);
       }
+      await refresh();
+    });
+  }
+
+  Future<void> showDayLogger(DateTime date) async {
+    final existing = dayLogFor(date);
+    var selectedMood = existing?['mood'] as String?;
+    var selectedFlow = existing?['flow'] as String? ?? 'none';
+    var selectedEnergy = existing?['energy'] as String?;
+    final symptoms = <String>{
+      ...((existing?['symptoms'] as List?)?.whereType<String>() ?? const [])
+    };
+    final noteController =
+        TextEditingController(text: existing?['note'] as String? ?? '');
+
+    const availableSymptoms = [
+      'Cramps',
+      'Headache',
+      'Bloating',
+      'Tender breasts',
+      'Backache',
+      'Fatigue',
+      'Mood swings',
+      'Cravings',
+      'Acne',
+      'Nausea',
+    ];
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: cream,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+              22, 18, 22, MediaQuery.viewInsetsOf(context).bottom + 22),
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                      color: line, borderRadius: BorderRadius.circular(4))),
+              const SizedBox(height: 18),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: heading(
+                  'Daily Wellness',
+                  formatDate(date),
+                  'Log your mood, period flow, and body sensations.',
+                ),
+              ),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('How are you feeling today?',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: moodMeta.entries.map((e) {
+                    final key = e.key;
+                    final item = e.value;
+                    final isSelected = selectedMood == key;
+                    return ChoiceChip(
+                      label: Text('${item.emoji} ${item.label}'),
+                      selected: isSelected,
+                      selectedColor: item.color,
+                      onSelected: (val) =>
+                          setSheetState(() => selectedMood = val ? key : null),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Period flow',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: flowMeta.entries.map((e) {
+                    final key = e.key;
+                    final item = e.value;
+                    final isSelected = selectedFlow == key;
+                    return ChoiceChip(
+                      label: Text('${item.icon} ${item.label}'),
+                      selected: isSelected,
+                      selectedColor: rose,
+                      onSelected: (val) {
+                        if (val) setSheetState(() => selectedFlow = key);
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Energy level',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: energyMeta.entries.map((e) {
+                    final key = e.key;
+                    final item = e.value;
+                    final isSelected = selectedEnergy == key;
+                    return ChoiceChip(
+                      label: Text('${item.icon} ${item.label}'),
+                      selected: isSelected,
+                      selectedColor: sage.withValues(alpha: .4),
+                      onSelected: (val) => setSheetState(
+                          () => selectedEnergy = val ? key : null),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Body & symptoms',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 7,
+                  runSpacing: 7,
+                  children: availableSymptoms
+                      .map((sym) => FilterChip(
+                            label: Text(sym),
+                            selected: symptoms.contains(sym),
+                            onSelected: (selected) => setSheetState(() =>
+                                selected
+                                    ? symptoms.add(sym)
+                                    : symptoms.remove(sym)),
+                          ))
+                      .toList(),
+                ),
+              ),
+              const SizedBox(height: 14),
+              input(noteController, 'Daily note (private)',
+                  lines: 3, maxLength: 500),
+              button(existing == null ? 'Save daily log' : 'Update daily log',
+                  () => Navigator.pop(sheetContext, true)),
+              if (existing != null)
+                TextButton(
+                  onPressed: () => Navigator.pop(sheetContext, false),
+                  child: const Text('Delete this day’s log',
+                      style: TextStyle(color: coral)),
+                ),
+            ]),
+          ),
+        ),
+      ),
+    );
+
+    final noteText = noteController.text.trim();
+    noteController.dispose();
+
+    if (saved == null) return;
+    if (saved == false && existing != null) {
+      await action(() async {
+        await client!.from('day_logs').delete().eq('id', existing['id']);
+        await refresh();
+      });
+      return;
+    }
+
+    await action(() async {
+      final values = {
+        'owner_id': session!.user.id,
+        'date_on': sqlDate(date),
+        'mood': selectedMood,
+        'flow': selectedFlow,
+        'energy': selectedEnergy,
+        'symptoms': symptoms.toList(),
+        'note': noteText.isEmpty ? null : noteText,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      await client!.from('day_logs').upsert(
+            values,
+            onConflict: 'owner_id,date_on',
+          );
       await refresh();
     });
   }
@@ -1033,6 +1278,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         metric('${cycles.length}', 'past cycles')
       ]),
       const SizedBox(height: 18),
+      todayWellnessCard(),
+      const SizedBox(height: 12),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         const Text('Recent periods',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
@@ -1056,6 +1303,268 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 color: sage))
       ]),
     ]);
+  }
+
+  Widget todayWellnessCard() {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final log = dayLogFor(today);
+    final moodKey = log?['mood'] as String?;
+    final moodInfo = moodKey != null ? moodMeta[moodKey] : null;
+    final flowKey = log?['flow'] as String?;
+    final flowInfo = flowKey != null ? flowMeta[flowKey] : null;
+    final energyKey = log?['energy'] as String?;
+    final energyInfo = energyKey != null ? energyMeta[energyKey] : null;
+    final symptoms = (log?['symptoms'] as List?)?.whereType<String>().toList() ?? [];
+    final note = log?['note'] as String?;
+
+    return card('Today’s wellness', [
+      if (log == null) ...[
+        const Text('How are you feeling today?',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        Text(
+          'Track your mood, period flow, and body sensations for today.',
+          style: TextStyle(fontSize: 13, color: ink.withValues(alpha: .62)),
+        ),
+        const SizedBox(height: 8),
+        button('Log today’s mood & flow', () => showDayLogger(today)),
+      ] else ...[
+        Row(children: [
+          Text(formatDate(today),
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: ink.withValues(alpha: .55))),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: sage.withValues(alpha: .3),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Text('Logged today',
+                style: TextStyle(
+                    fontSize: 11, fontWeight: FontWeight.w700, color: plum)),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            if (moodInfo != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: moodInfo.color,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text('${moodInfo.emoji} ${moodInfo.label}',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700, color: ink)),
+              ),
+            if (flowInfo != null && flowKey != 'none')
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: rose.withValues(alpha: .6),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text('${flowInfo.icon} ${flowInfo.label}',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700, color: ink)),
+              ),
+            if (energyInfo != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: sage.withValues(alpha: .4),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text('${energyInfo.icon} ${energyInfo.label}',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700, color: ink)),
+              ),
+          ],
+        ),
+        if (symptoms.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: symptoms
+                .map((s) => Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: cream,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: line),
+                      ),
+                      child: Text(s,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: ink.withValues(alpha: .8),
+                              fontWeight: FontWeight.w600)),
+                    ))
+                .toList(),
+          ),
+        ],
+        if (note != null && note.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: cream,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: line),
+            ),
+            child: Text('“$note”',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                    color: ink.withValues(alpha: .75))),
+          ),
+        ],
+        button('Update today’s entry', () => showDayLogger(today),
+            secondary: true),
+      ],
+    ]);
+  }
+
+  List<Widget> dayLogSection(DateTime date) {
+    final log = dayLogFor(date);
+    if (log == null) {
+      if (role != 'owner') return const [];
+      return [
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: () => showDayLogger(date),
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('Log mood & flow for this day'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: plum,
+            side: const BorderSide(color: line),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+      ];
+    }
+
+    final moodKey = log['mood'] as String?;
+    final moodInfo = moodKey != null ? moodMeta[moodKey] : null;
+    final flowKey = log['flow'] as String?;
+    final flowInfo = flowKey != null ? flowMeta[flowKey] : null;
+    final energyKey = log['energy'] as String?;
+    final energyInfo = energyKey != null ? energyMeta[energyKey] : null;
+    final symptoms = (log['symptoms'] as List?)?.whereType<String>().toList() ?? [];
+    final note = log['note'] as String?;
+
+    return [
+      const SizedBox(height: 12),
+      const Divider(color: line, height: 1),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          const Text('Daily Wellness',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+          const Spacer(),
+          if (role == 'owner')
+            GestureDetector(
+              onTap: () => showDayLogger(date),
+              child: const Text('Edit ›',
+                  style: TextStyle(color: plum, fontWeight: FontWeight.w700, fontSize: 13)),
+            ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          if (moodInfo != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: moodInfo.color,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${moodInfo.emoji} ${moodInfo.label}',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ink),
+              ),
+            ),
+          if (flowInfo != null && flowKey != 'none')
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: rose.withValues(alpha: .5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${flowInfo.icon} ${flowInfo.label}',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ink),
+              ),
+            ),
+          if (energyInfo != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: sage.withValues(alpha: .4),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${energyInfo.icon} ${energyInfo.label} energy',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ink),
+              ),
+            ),
+        ],
+      ),
+      if (symptoms.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            for (final s in symptoms)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: line),
+                ),
+                child: Text(s,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: ink.withValues(alpha: .75),
+                        fontWeight: FontWeight.w500)),
+              ),
+          ],
+        ),
+      ],
+      if (note != null && note.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xfffaf6f2),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: line),
+          ),
+          child: Text(
+            '“$note”',
+            style: TextStyle(
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
+              color: ink.withValues(alpha: .75),
+            ),
+          ),
+        ),
+      ],
+    ];
   }
 
   Widget metric(String value, String label) => Expanded(
@@ -1190,6 +1699,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             final logged = isPeriodDay(date);
             final predicted = isPredictedDay(date);
             final selected = DateUtils.isSameDay(date, selectedDay);
+            final hasDayLogEntry = hasDayLog(date);
             return InkWell(
                 onTap: () => setState(() => selectedDay = date),
                 child: Container(
@@ -1204,20 +1714,37 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                     ? rose
                                     : null,
                         borderRadius: BorderRadius.circular(12)),
-                    child: Text('${date.day}',
-                        style: TextStyle(
-                            color: selected || logged ? Colors.white : ink,
-                            fontWeight: selected
-                                ? FontWeight.bold
-                                : FontWeight.normal))));
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('${date.day}',
+                            style: TextStyle(
+                                color: selected || logged ? Colors.white : ink,
+                                fontWeight: selected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal)),
+                        if (hasDayLogEntry)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Container(
+                              width: 5,
+                              height: 5,
+                              decoration: BoxDecoration(
+                                color: selected || logged ? Colors.white : plum,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                      ],
+                    )));
           }),
       const SizedBox(height: 12),
       Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        legend(coral, 'Logged'),
-        SizedBox(width: 16),
+        legend(coral, 'Logged period'),
+        const SizedBox(width: 12),
         legend(rose, 'Predicted'),
-        SizedBox(width: 16),
-        legend(sage, 'Fertile window')
+        const SizedBox(width: 12),
+        legend(plum, 'Daily log'),
       ]),
       const SizedBox(height: 20),
       card(formatLongDate(selectedDay), [
@@ -1225,7 +1752,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ? 'Logged period day'
             : isPredictedDay(selectedDay)
                 ? 'Predicted period window'
-                : 'No cycle event logged')
+                : 'No cycle event logged'),
+        ...dayLogSection(selectedDay),
       ]),
     ]);
   }
@@ -1253,6 +1781,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         Builder(builder: (_) {
           final date = monday.add(Duration(days: i));
           final active = DateUtils.isSameDay(date, selectedDay);
+          final dayLog = dayLogFor(date);
+          String? moodEmoji;
+          String? flowText;
+          if (dayLog != null) {
+            final moodKey = dayLog['mood'] as String?;
+            if (moodKey != null) moodEmoji = moodMeta[moodKey]?.emoji;
+            final flowKey = dayLog['flow'] as String?;
+            if (flowKey != null && flowKey != 'none') {
+              flowText = flowMeta[flowKey]?.label;
+            }
+          }
+          final parts = [
+            if (isPeriodDay(date))
+              'Logged cycle day'
+            else if (isPredictedDay(date))
+              'Upcoming'
+            else
+              'Plan gently',
+            if (moodEmoji != null) 'Mood: $moodEmoji',
+            if (flowText != null) 'Flow: $flowText',
+          ];
           return ListTile(
               onTap: () => setState(() => selectedDay = date),
               shape: RoundedRectangleBorder(
@@ -1263,12 +1812,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   foregroundColor: active ? Colors.white : ink,
                   child: Text(weekdayLetter(date.weekday))),
               title: Text(
-                  '${date.day}   ${isPeriodDay(date) ? 'Period' : isPredictedDay(date) ? 'Predicted' : 'Plan gently'}'),
-              subtitle:
-                  Text(isPeriodDay(date) ? 'Logged cycle day' : 'Upcoming'),
-              trailing: isPeriodDay(date)
-                  ? const Icon(Icons.circle, color: coral, size: 12)
-                  : null);
+                  '${date.day}   ${isPeriodDay(date) ? 'Period' : isPredictedDay(date) ? 'Predicted' : 'Regular day'}'),
+              subtitle: Text(parts.join(' • ')),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (moodEmoji != null)
+                    Text(moodEmoji, style: const TextStyle(fontSize: 16)),
+                  if (isPeriodDay(date)) ...[
+                    const SizedBox(width: 6),
+                    const Icon(Icons.circle, color: coral, size: 10),
+                  ],
+                ],
+              ));
         }),
       card(
           'A gentle reminder',
@@ -1325,92 +1881,639 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             [Text('Average $averageCycleLength days')]),
       ]);
 
+  // ─── computed helpers for stats ────────────────────────────────────────────
+
+  /// Cycle lengths for the last [n] cycles (oldest→newest).
+  List<int> _recentLengths(int n) =>
+      cycleLengths.take(n).toList().reversed.toList();
+
+  /// Trend delta: latest cycle length vs previous one.
+  int? get _cycleLengthTrend {
+    final l = cycleLengths;
+    return l.length >= 2 ? l[0] - l[1] : null;
+  }
+
+  /// Period duration trend (last 6, oldest→newest).
+  List<int> get _periodDurations {
+    return cycles
+        .where((c) => c['end_date'] != null)
+        .take(6)
+        .toList()
+        .reversed
+        .map((c) =>
+            DateTime.parse(c['end_date'] as String)
+                .difference(DateTime.parse(c['start_date'] as String))
+                .inDays +
+            1)
+        .toList();
+  }
+
+  /// Symptom counts across all logged cycles and day logs.
+  Map<String, int> get _symptomCounts {
+    final counts = <String, int>{};
+    for (final c in cycles) {
+      final syms = (c['symptoms'] as List?)?.whereType<String>() ?? [];
+      for (final s in syms) {
+        counts[s] = (counts[s] ?? 0) + 1;
+      }
+    }
+    for (final dl in dayLogs) {
+      final syms = (dl['symptoms'] as List?)?.whereType<String>() ?? [];
+      for (final s in syms) {
+        counts[s] = (counts[s] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  /// Flow counts across all logged cycles and day logs.
+  Map<String, int> get _flowCounts {
+    final counts = <String, int>{'light': 0, 'medium': 0, 'heavy': 0};
+    for (final c in cycles) {
+      final f = c['flow'] as String?;
+      if (f != null && counts.containsKey(f)) counts[f] = counts[f]! + 1;
+    }
+    for (final dl in dayLogs) {
+      final f = dl['flow'] as String?;
+      if (f != null && counts.containsKey(f)) counts[f] = counts[f]! + 1;
+    }
+    return counts;
+  }
+
+  // ─── stats screen ───────────────────────────────────────────────────────────
+
   Widget statistics() {
-    final lengths = cycleLengths.take(6).toList().reversed.toList();
-    return Column(children: [
-      Row(children: [
-        metricCard('$averageCycleLength', 'Average cycle', 'days'),
-        metricCard('$averagePeriodLength', 'Period length', 'days'),
-        metricCard('${regularity.round()}%', 'Regularity', 'stable',
-            color: sage)
-      ]),
-      card('Cycle length trend', [
-        SizedBox(
-            height: 128,
-            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              for (final length in lengths)
-                Expanded(
-                    child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 5),
-                        child: Column(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              Expanded(
-                                  child: Align(
-                                      alignment: Alignment.bottomCenter,
-                                      child: Container(
-                                          height: 32.0 +
-                                              (length.clamp(20, 40) - 20) * 3,
-                                          decoration: BoxDecoration(
-                                              color: length == lengths.last
-                                                  ? plum
-                                                  : rose,
-                                              borderRadius:
-                                                  BorderRadius.circular(8))))),
-                              Text('$length',
-                                  style: const TextStyle(fontSize: 11))
-                            ])))
-            ]))
-      ]),
+    final lengths = _recentLengths(8);
+    final trend = _cycleLengthTrend;
+    final periodDurs = _periodDurations;
+    final symptomCounts = _symptomCounts;
+    final flowCounts = _flowCounts;
+    final totalWithSymptoms = cycles.where((c) =>
+        (c['symptoms'] as List?)?.isNotEmpty == true).length +
+        dayLogs.where((dl) => (dl['symptoms'] as List?)?.isNotEmpty == true).length;
+    final totalFlowed = cycles.length +
+        dayLogs.where((dl) => dl['flow'] != null && dl['flow'] != 'none').length;
+
+    // fertile window estimate
+    final nextPeriod = predictedNext;
+    DateTime? ovulation;
+    DateTime? fertileStart;
+    DateTime? fertileEnd;
+    if (nextPeriod != null) {
+      ovulation = nextPeriod.subtract(const Duration(days: 14));
+      fertileStart = ovulation.subtract(const Duration(days: 5));
+      fertileEnd = ovulation.add(const Duration(days: 1));
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // ── top metric row ──────────────────────────────────────────────────────
+      IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _statBadge(
+            value: '$averageCycleLength',
+            label: 'Avg cycle',
+            footer: 'days',
+            trend: trend,
+            color: rose,
+          ),
+          const SizedBox(width: 8),
+          _statBadge(
+            value: '$averagePeriodLength',
+            label: 'Period length',
+            footer: 'days avg',
+            color: const Color(0xfff0e6fb),
+          ),
+          const SizedBox(width: 8),
+          _statBadge(
+            value: '${regularity.round()}%',
+            label: 'Regularity',
+            footer: cycles.length < 2 ? 'need more data' : 'stable',
+            color: sage,
+          ),
+        ]),
+      ),
+      const SizedBox(height: 14),
+
+      // ── cycle length bar chart ───────────────────────────────────────────────
+      if (lengths.isNotEmpty)
+        _statsCard(
+          title: 'Cycle length trend',
+          subtitle: 'Last ${lengths.length} cycles · in days',
+          child: _cycleLengthChart(lengths),
+        ),
+
+      // ── period duration trend ────────────────────────────────────────────────
+      if (periodDurs.length >= 2)
+        _statsCard(
+          title: 'Period duration trend',
+          subtitle: 'Last ${periodDurs.length} periods · in days',
+          child: _durationChart(periodDurs),
+        ),
+
+      // ── flow distribution ────────────────────────────────────────────────────
+      if (totalFlowed > 0)
+        _statsCard(
+          title: 'Flow distribution',
+          subtitle: '$totalFlowed cycles logged',
+          child: _flowChart(flowCounts, totalFlowed),
+        ),
+
+      // ── symptom breakdown ────────────────────────────────────────────────────
+      if (symptomCounts.isNotEmpty)
+        _statsCard(
+          title: 'Symptom frequency',
+          subtitle: 'Across $totalWithSymptoms cycles with symptoms',
+          child: _symptomBreakdown(symptomCounts, totalWithSymptoms),
+        ),
+
+      // ── fertile window card ───────────────────────────────────────────────────
+      if (ovulation != null)
+        _statsCard(
+          title: 'Fertile window estimate',
+          subtitle: 'Based on your average cycle',
+          child: _fertileCard(fertileStart!, ovulation, fertileEnd!),
+        ),
+
+      // ── prediction confidence ─────────────────────────────────────────────────
       Row(children: [
         Expanded(
-            child: card('Prediction', [
-          const Text('High',
-              style: TextStyle(
-                  fontSize: 22,
-                  color: Color(0xff6d8b70),
-                  fontWeight: FontWeight.w800)),
-          const Text('confidence', style: TextStyle(fontSize: 12))
-        ])),
+          child: _miniCard(
+            icon: Icons.auto_graph_rounded,
+            label: 'Prediction',
+            value: cycles.length >= 3 ? 'High' : cycles.length == 2 ? 'Medium' : 'Low',
+            valueColor: cycles.length >= 3
+                ? const Color(0xff6d8b70)
+                : cycles.length == 2
+                    ? coral
+                    : ink.withValues(alpha: .45),
+          ),
+        ),
         const SizedBox(width: 10),
         Expanded(
-            child: card('History', [
-          Text('${cycles.length} cycles',
-              style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          const Text('improves estimates', style: TextStyle(fontSize: 12))
-        ]))
+          child: _miniCard(
+            icon: Icons.history_rounded,
+            label: 'Logged cycles',
+            value: '${cycles.length}',
+            valueColor: plum,
+          ),
+        ),
       ]),
-      card(
-          'Insights support awareness—not diagnosis.',
-          [
-            const Text('Predictions improve as you log consistently.',
-                style: TextStyle(fontSize: 12))
+      const SizedBox(height: 8),
+
+      // ── disclaimer ────────────────────────────────────────────────────────────
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xfffaf0ed),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: line),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outline_rounded,
+                color: plum.withValues(alpha: .6), size: 18),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Insights support awareness—not medical diagnosis. Predictions improve as you log more cycles.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
           ],
-          color: const Color(0xfffaf0ed)),
+        ),
+      ),
+      const SizedBox(height: 6),
     ]);
   }
 
-  Widget metricCard(String value, String label, String footer,
-          {Color color = rose}) =>
+  // ── stat badge (top row) ────────────────────────────────────────────────────
+  Widget _statBadge({
+    required String value,
+    required String label,
+    required String footer,
+    int? trend,
+    required Color color,
+  }) =>
       Expanded(
-          child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-              decoration: BoxDecoration(
-                  color: color.withValues(alpha: .3),
-                  borderRadius: BorderRadius.circular(16)),
-              child: Column(children: [
-                Text(value,
-                    style: const TextStyle(
-                        fontSize: 21, fontWeight: FontWeight.w800)),
-                Text(label,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 11)),
-                Text(footer,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: .32),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (trend != null)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      trend > 0
+                          ? Icons.arrow_upward_rounded
+                          : trend < 0
+                              ? Icons.arrow_downward_rounded
+                              : Icons.remove_rounded,
+                      size: 12,
+                      color: trend > 0
+                          ? coral
+                          : trend < 0
+                              ? const Color(0xff6d8b70)
+                              : ink.withValues(alpha: .4),
+                    ),
+                    const SizedBox(width: 2),
+                    Text(
+                      trend == 0
+                          ? 'same'
+                          : '${trend > 0 ? '+' : ''}$trend d',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: trend > 0
+                            ? coral
+                            : trend < 0
+                                ? const Color(0xff6d8b70)
+                                : ink.withValues(alpha: .4),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                const SizedBox(height: 0),
+              Text(
+                value,
+                style: const TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.w800),
+              ),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                footer,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 9, color: ink.withValues(alpha: .5)),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  // ── generic stats card wrapper ───────────────────────────────────────────────
+  Widget _statsCard(
+          {required String title,
+          String? subtitle,
+          required Widget child}) =>
+      Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w700)),
+            if (subtitle != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 2, bottom: 12),
+                child: Text(subtitle,
                     style: TextStyle(
-                        fontSize: 10, color: ink.withValues(alpha: .5)))
-              ])));
+                        fontSize: 11, color: ink.withValues(alpha: .5))),
+              )
+            else
+              const SizedBox(height: 12),
+            child,
+          ],
+        ),
+      );
+
+  // ── cycle-length bar chart ───────────────────────────────────────────────────
+  Widget _cycleLengthChart(List<int> lengths) {
+    final minL = lengths.reduce((a, b) => a < b ? a : b).clamp(21, 45);
+    final maxL = lengths.reduce((a, b) => a > b ? a : b).clamp(21, 45);
+    final range = (maxL - minL).clamp(1, 45).toDouble();
+    const chartH = 120.0;
+    const minBarH = 28.0;
+    return Column(children: [
+      SizedBox(
+        height: chartH,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // y-axis
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('$maxL',
+                      style: TextStyle(
+                          fontSize: 9, color: ink.withValues(alpha: .4))),
+                  Text('$minL',
+                      style: TextStyle(
+                          fontSize: 9, color: ink.withValues(alpha: .4))),
+                ],
+              ),
+            ),
+            ...lengths.asMap().entries.map((e) {
+              final i = e.key;
+              final l = e.value;
+              final isLast = i == lengths.length - 1;
+              final fraction =
+                  range == 0 ? 1.0 : (l - minL) / range;
+              final barH = minBarH + fraction * (chartH - minBarH);
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        '$l',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: isLast
+                              ? FontWeight.w700
+                              : FontWeight.normal,
+                          color: isLast ? plum : ink.withValues(alpha: .6),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Container(
+                        height: barH,
+                        decoration: BoxDecoration(
+                          color: isLast
+                              ? plum
+                              : rose.withValues(alpha: .8),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _dot(rose, 'Previous cycles'),
+          const SizedBox(width: 14),
+          _dot(plum, 'Most recent'),
+        ],
+      ),
+    ]);
+  }
+
+  // ── period duration chart ────────────────────────────────────────────────────
+  Widget _durationChart(List<int> durs) {
+    final maxD = durs.reduce((a, b) => a > b ? a : b).clamp(1, 14);
+    const chartH = 88.0;
+    const minBarH = 16.0;
+    return SizedBox(
+      height: chartH,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          ...durs.asMap().entries.map((e) {
+            final i = e.key;
+            final d = e.value;
+            final isLast = i == durs.length - 1;
+            final barH = minBarH + (d / maxD) * (chartH - minBarH);
+            return Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text('$d d',
+                        style: TextStyle(
+                            fontSize: 9,
+                            color: isLast ? plum : ink.withValues(alpha: .5),
+                            fontWeight: isLast
+                                ? FontWeight.w700
+                                : FontWeight.normal)),
+                    const SizedBox(height: 2),
+                    Container(
+                      height: barH,
+                      decoration: BoxDecoration(
+                        color: isLast
+                            ? const Color(0xffb097c8)
+                            : const Color(0xffe9d8f4),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // ── flow distribution bars ───────────────────────────────────────────────────
+  Widget _flowChart(Map<String, int> counts, int total) {
+    final items = [
+      _FlowItem('Light', counts['light'] ?? 0, sage),
+      _FlowItem('Medium', counts['medium'] ?? 0, coral),
+      _FlowItem('Heavy', counts['heavy'] ?? 0, const Color(0xffc44a6a)),
+    ];
+    return Column(
+      children: items.map((item) {
+        final pct = total == 0 ? 0.0 : item.count / total;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(children: [
+            SizedBox(
+              width: 52,
+              child: Text(item.label,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  minHeight: 12,
+                  backgroundColor: item.color.withValues(alpha: .18),
+                  valueColor: AlwaysStoppedAnimation(item.color),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 34,
+              child: Text(
+                  '${(pct * 100).round()}%',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: ink.withValues(alpha: .6),
+                      fontWeight: FontWeight.w600)),
+            ),
+          ]),
+        );
+      }).toList(),
+    );
+  }
+
+  // ── symptom breakdown ────────────────────────────────────────────────────────
+  Widget _symptomBreakdown(Map<String, int> counts, int total) {
+    if (total == 0) {
+      return Text('No symptoms logged yet.',
+          style: TextStyle(color: ink.withValues(alpha: .5)));
+    }
+    final sorted = counts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return Column(
+      children: sorted.map((entry) {
+        final pct = entry.value / total;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(children: [
+            Expanded(
+              flex: 3,
+              child: Text(entry.key,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+            Expanded(
+              flex: 5,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  minHeight: 10,
+                  backgroundColor: rose.withValues(alpha: .25),
+                  valueColor: const AlwaysStoppedAnimation(coral),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 36,
+              child: Text(
+                  '${(pct * 100).round()}%',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: ink.withValues(alpha: .6),
+                      fontWeight: FontWeight.w600)),
+            ),
+          ]),
+        );
+      }).toList(),
+    );
+  }
+
+  // ── fertile window card ──────────────────────────────────────────────────────
+  Widget _fertileCard(
+      DateTime fertileStart, DateTime ovulation, DateTime fertileEnd) =>
+      Column(children: [
+        Row(children: [
+          _fertileChip(Icons.local_florist_rounded, 'Fertile window starts',
+              formatDate(fertileStart), const Color(0xffd4ecd6)),
+          const SizedBox(width: 8),
+          _fertileChip(Icons.brightness_5_rounded, 'Est. ovulation',
+              formatDate(ovulation), const Color(0xfff8edf5)),
+        ]),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: rose.withValues(alpha: .25),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(children: [
+            const Icon(Icons.info_outline_rounded, size: 14, color: plum),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'These are estimates based on a 28-day ovulation window. Track consistently for better accuracy.',
+                style: TextStyle(fontSize: 11),
+              ),
+            ),
+          ]),
+        ),
+      ]);
+
+  Widget _fertileChip(
+          IconData icon, String title, String date, Color bg) =>
+      Expanded(
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+              color: bg, borderRadius: BorderRadius.circular(14)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icon, size: 18, color: plum),
+            const SizedBox(height: 6),
+            Text(title,
+                style: TextStyle(
+                    fontSize: 10, color: ink.withValues(alpha: .55))),
+            const SizedBox(height: 2),
+            Text(date,
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      );
+
+  // ── mini summary card ────────────────────────────────────────────────────────
+  Widget _miniCard(
+          {required IconData icon,
+          required String label,
+          required String value,
+          required Color valueColor}) =>
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: line),
+        ),
+        child: Row(children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: rose.withValues(alpha: .4),
+            child: Icon(icon, color: plum, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(value,
+                style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: valueColor)),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 11, color: ink.withValues(alpha: .55))),
+          ]),
+        ]),
+      );
+
+  static Widget _dot(Color color, String label) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        CircleAvatar(radius: 4, backgroundColor: color),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 10)),
+      ]);
 
   Widget momentsScreen() => page([
         heading(
@@ -1610,6 +2713,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           notes = [];
           ratings = [];
           cycles = [];
+          dayLogs = [];
           tab = 0;
           displayName = null;
           ownerName = null;
@@ -1740,3 +2844,10 @@ const noteDesign = <String, NoteDesign>{
   'bloom': NoteDesign('A flower for you', '✿', Color(0xfff8edf5)),
   'star': NoteDesign('A bright thought', '✦', Color(0xfff3f0ff)),
 };
+
+class _FlowItem {
+  const _FlowItem(this.label, this.count, this.color);
+  final String label;
+  final int count;
+  final Color color;
+}
