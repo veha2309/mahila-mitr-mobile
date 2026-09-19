@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config.dart';
+import 'premium_widgets.dart';
+import 'wellness_guide.dart';
 
 const plum = Color(0xff6e4d73);
 const ink = Color(0xff2f233a);
@@ -16,6 +18,8 @@ const rose = Color(0xffe9c7d1);
 const sage = Color(0xffb7c9b3);
 const coral = Color(0xfff28c8c);
 const line = Color(0xffe8dde1);
+const blush = Color(0xfffff0f3);
+const softLilac = Color(0xfff3eef8);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,16 +37,72 @@ class MahilaMitr extends StatelessWidget {
         title: 'Mahila Mitr',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: plum, surface: cream),
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: plum,
+            surface: cream,
+            primary: plum,
+            secondary: coral,
+            error: const Color(0xffa43d55),
+          ),
           scaffoldBackgroundColor: cream,
           useMaterial3: true,
-          fontFamily: 'sans-serif',
-          textTheme: const TextTheme(bodyMedium: TextStyle(color: ink)),
+          textTheme: const TextTheme(
+            headlineLarge: TextStyle(
+                color: ink,
+                fontSize: 32,
+                height: 1.05,
+                fontWeight: FontWeight.w800),
+            headlineSmall: TextStyle(
+                color: ink, fontSize: 22, fontWeight: FontWeight.w800),
+            titleMedium: TextStyle(
+                color: ink, fontSize: 16, fontWeight: FontWeight.w700),
+            bodyMedium: TextStyle(color: ink, height: 1.35),
+          ),
+          navigationBarTheme: const NavigationBarThemeData(
+            height: 72,
+            indicatorColor: Color(0xffeadde8),
+            backgroundColor: Colors.white,
+            elevation: 0,
+          ),
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: line),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: line),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: plum, width: 1.6),
+            ),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+          ),
+          chipTheme: ChipThemeData(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(99)),
+            side: const BorderSide(color: line),
+            selectedColor: rose.withValues(alpha: .55),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+          ),
           filledButtonTheme: FilledButtonThemeData(
             style: FilledButton.styleFrom(
               backgroundColor: plum,
               foregroundColor: Colors.white,
               minimumSize: const Size.fromHeight(48),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+          outlinedButtonTheme: OutlinedButtonThemeData(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: plum,
+              minimumSize: const Size.fromHeight(48),
+              side: const BorderSide(color: line),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),
             ),
@@ -59,6 +119,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  final guideController = WellnessGuideController();
   final email = TextEditingController();
   final otp = TextEditingController();
   final pairingCode = TextEditingController();
@@ -568,7 +629,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
     );
     final notes = notesController.text.trim();
-    notesController.dispose();
+    // Modal futures complete as dismissal begins. Keep controllers alive until
+    // the reverse transition has removed the TextField from the tree.
+    Timer(const Duration(milliseconds: 400), notesController.dispose);
     if (saved == null) return;
     if (saved == false && existing != null) {
       await action(() async {
@@ -605,6 +668,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     };
     final noteController =
         TextEditingController(text: existing?['note'] as String? ?? '');
+    var showDetails = existing != null;
 
     const availableSymptoms = [
       'Cramps',
@@ -622,7 +686,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: cream,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => Padding(
           padding: EdgeInsets.fromLTRB(
@@ -638,9 +705,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               Align(
                 alignment: Alignment.centerLeft,
                 child: heading(
-                  'Daily Wellness',
-                  formatDate(date),
-                  'Log your mood, period flow, and body sensations.',
+                  'A moment for you',
+                  DateUtils.isSameDay(date, DateTime.now())
+                      ? 'How are you today?'
+                      : formatDate(date),
+                  'Start with what feels easy. More detail is always optional.',
                 ),
               ),
               const Align(
@@ -695,59 +764,83 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   }).toList(),
                 ),
               ),
-              const SizedBox(height: 18),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Energy level',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-              ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: energyMeta.entries.map((e) {
-                    final key = e.key;
-                    final item = e.value;
-                    final isSelected = selectedEnergy == key;
-                    return ChoiceChip(
-                      label: Text('${item.icon} ${item.label}'),
-                      selected: isSelected,
-                      selectedColor: sage.withValues(alpha: .4),
-                      onSelected: (val) => setSheetState(
-                          () => selectedEnergy = val ? key : null),
-                    );
-                  }).toList(),
+                child: TextButton.icon(
+                  onPressed: () =>
+                      setSheetState(() => showDetails = !showDetails),
+                  icon: Icon(showDetails
+                      ? Icons.expand_less_rounded
+                      : Icons.add_circle_outline_rounded),
+                  label: Text(showDetails
+                      ? 'Hide optional details'
+                      : 'Add energy, symptoms or a private note'),
                 ),
               ),
-              const SizedBox(height: 18),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Body & symptoms',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
+              AnimatedCrossFade(
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                crossFadeState: showDetails
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                firstChild: const SizedBox(width: double.infinity),
+                secondChild: Column(children: [
+                  const SizedBox(height: 8),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Energy level',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: energyMeta.entries.map((e) {
+                        final key = e.key;
+                        final item = e.value;
+                        return ChoiceChip(
+                          label: Text('${item.icon} ${item.label}'),
+                          selected: selectedEnergy == key,
+                          selectedColor: sage.withValues(alpha: .4),
+                          onSelected: (val) => setSheetState(
+                              () => selectedEnergy = val ? key : null),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Body & symptoms',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 7,
+                      runSpacing: 7,
+                      children: availableSymptoms
+                          .map((sym) => FilterChip(
+                                label: Text(sym),
+                                selected: symptoms.contains(sym),
+                                onSelected: (selected) => setSheetState(() =>
+                                    selected
+                                        ? symptoms.add(sym)
+                                        : symptoms.remove(sym)),
+                              ))
+                          .toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  input(noteController, 'Private note (optional)',
+                      lines: 3, maxLength: 500),
+                ]),
               ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 7,
-                  runSpacing: 7,
-                  children: availableSymptoms
-                      .map((sym) => FilterChip(
-                            label: Text(sym),
-                            selected: symptoms.contains(sym),
-                            onSelected: (selected) => setSheetState(() =>
-                                selected
-                                    ? symptoms.add(sym)
-                                    : symptoms.remove(sym)),
-                          ))
-                      .toList(),
-                ),
-              ),
-              const SizedBox(height: 14),
-              input(noteController, 'Daily note (private)',
-                  lines: 3, maxLength: 500),
               button(existing == null ? 'Save daily log' : 'Update daily log',
                   () => Navigator.pop(sheetContext, true)),
               if (existing != null)
@@ -763,7 +856,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
 
     final noteText = noteController.text.trim();
-    noteController.dispose();
+    Timer(const Duration(milliseconds: 400), noteController.dispose);
 
     if (saved == null) return;
     if (saved == false && existing != null) {
@@ -774,6 +867,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
 
+    var saveCompleted = false;
     await action(() async {
       final values = {
         'owner_id': session!.user.id,
@@ -790,7 +884,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onConflict: 'owner_id,date_on',
           );
       await refresh();
+      saveCompleted = true;
     });
+    if (saveCompleted &&
+        existing == null &&
+        DateUtils.isSameDay(date, DateTime.now())) {
+      guideController.celebrate();
+    }
+    if (saveCompleted && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(existing == null
+            ? 'Today’s check-in is saved privately.'
+            : 'Your check-in has been updated.'),
+      ));
+    }
   }
 
   Widget dateField(String label, DateTime? value, VoidCallback onTap,
@@ -922,6 +1030,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         });
         await refresh();
       });
+  Future<void> confirmUnlink() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.link_off_rounded, color: plum),
+        title: const Text('Disconnect this pairing?'),
+        content: const Text(
+            'Both people will lose access to shared moments and reflections. Your private cycle history stays in your account.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep connection')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await unlink();
+  }
+
   Future<void> sendNote() => action(() async {
         if (link == null || noteDraft.text.trim().isEmpty) return;
         await client!.from('notes').insert({
@@ -959,20 +1091,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (mounted) {
       await showDialog<void>(
           context: context,
-          builder: (context) => AlertDialog(
-                backgroundColor: design.color,
-                title: Column(children: [
-                  Text(design.icon, style: const TextStyle(fontSize: 52)),
-                  Text(design.title)
-                ]),
-                content: Text(note['body'] as String,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 20)),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Close'))
-                ],
+          builder: (context) => AnimatedEnvelopeDialog(
+                icon: design.icon,
+                title: design.title,
+                message: note['body'] as String,
+                color: design.color,
+                reduceMotion: MediaQuery.disableAnimationsOf(context),
               ));
     }
     if (note['opened_at'] == null) {
@@ -987,12 +1111,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           {Color color = Colors.white}) =>
       Container(
         width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.all(18),
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(22),
           border: Border.all(color: line),
+          boxShadow: color == Colors.white
+              ? const [
+                  BoxShadow(
+                    color: Color(0x0d6e4d73),
+                    blurRadius: 18,
+                    offset: Offset(0, 8),
+                  )
+                ]
+              : null,
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(title,
@@ -1069,7 +1202,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ? [homeScreen(), insightsScreen(), momentsScreen(), moreScreen()]
         : [pairingScreen(), insightsScreen(), momentsScreen(), moreScreen()];
     return Scaffold(
-      body: SafeArea(child: IndexedStack(index: tab, children: pages)),
+      body: SafeArea(
+        child: AnimatedTabStack(
+          index: tab,
+          reduceMotion: MediaQuery.disableAnimationsOf(context),
+          children: pages,
+        ),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: tab,
         onDestinationSelected: (value) => setState(() => tab = value),
@@ -1093,7 +1232,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget page(List<Widget> children) => ListView(
-      padding: const EdgeInsets.fromLTRB(22, 20, 22, 28), children: children);
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 32), children: children);
 
   Widget roleScreen() => Scaffold(
         body: SafeArea(
@@ -1129,13 +1268,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 'Be present, send little moments, and support with empathy.',
                 () => chooseRole('partner'),
                 iconColor: coral),
-            card(
-                'Your data stays private.',
-                [
-                  const Text('You choose what is shared.',
-                      style: TextStyle(fontSize: 13))
-                ],
-                color: const Color(0xfffaf0ed)),
+            const PrivacyBanner(
+              title: 'Private from the very first step',
+              body:
+                  'Your cycle details stay yours. A partner sees only the information explained before you connect.',
+              icon: Icons.shield_outlined,
+              tone: Color(0xfffaf0ed),
+            ),
           ]),
         ),
       );
@@ -1180,6 +1319,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             const SizedBox(height: 26),
             heading('Welcome back', 'A private space,\njust for you.',
                 'One-time email verification keeps things simple.'),
+            const PrivacyBanner(
+              title: 'Password-free and discreet',
+              body:
+                  'We use a one-time email code. Sensitive details never appear in notification previews.',
+            ),
+            const SizedBox(height: 22),
             input(email, 'Email address', keyboard: TextInputType.emailAddress),
             button('Send verification code', sendCode),
             if (codeSent) ...[
@@ -1200,15 +1345,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       }),
                   child: const Text('Use a different email')),
             ],
-            const SizedBox(height: 82),
-            card(
-                'Secure by design',
-                [
-                  const Text(
-                      'No passwords. No sensitive details in lock-screen notifications.',
-                      style: TextStyle(fontSize: 13))
-                ],
-                color: const Color(0xfffaf0ed)),
+            const SizedBox(height: 36),
+            TextButton.icon(
+              onPressed: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.remove('role');
+                if (mounted) setState(() => role = null);
+              },
+              icon: const Icon(Icons.arrow_back_rounded, size: 18),
+              label: const Text('Choose a different role'),
+            ),
           ]),
         ),
       );
@@ -1221,13 +1367,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 'Your first name is shown only to the person you pair with.'),
             input(displayNameInput, 'First name', maxLength: 50),
             button('Save and continue', saveProfile),
-            card(
-                'Private by design',
-                [
-                  const Text(
-                      'Your name is not public and is visible only inside your paired connection.')
-                ],
-                color: sage.withValues(alpha: .25)),
+            const PrivacyBanner(
+              title: 'Only your paired person can see this',
+              body:
+                  'Your name is never public. You can disconnect your private pairing whenever you choose.',
+              icon: Icons.person_outline_rounded,
+              tone: Color(0xffeef4ec),
+            ),
           ]),
         ),
       );
@@ -1248,60 +1394,119 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
 
   Widget homeScreen() {
-    final average = averageCycleLength;
+    final today = DateUtils.dateOnly(DateTime.now());
     final next = predictedNext;
+    final latestStart = cycles.isEmpty
+        ? null
+        : DateTime.parse(cycles.first['start_date'] as String);
+    final cycleDay = latestStart == null || today.isBefore(latestStart)
+        ? null
+        : today.difference(DateUtils.dateOnly(latestStart)).inDays + 1;
+    final phase = cycleDay == null
+        ? 'Your cycle story'
+        : cycleDay <= averagePeriodLength
+            ? 'Menstrual phase'
+            : cycleDay <= 13
+                ? 'Follicular phase'
+                : cycleDay <= 16
+                    ? 'Ovulation window'
+                    : 'Luteal phase';
+    final daysToGo = next?.difference(today).inDays;
+    final confidence = cycles.length >= 3
+        ? 'High'
+        : cycles.isNotEmpty
+            ? 'Building'
+            : 'Starting';
+    final checkedIn = hasDayLog(today);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final week = List.generate(
+      7,
+      (index) => today.subtract(Duration(days: 6 - index)),
+    );
+    final todayLog = dayLogFor(today);
+    final energy = todayLog?['energy'] as String?;
+    final insight = energy == 'low'
+        ? const WellnessInsight(
+            icon: Icons.bedtime_outlined,
+            title: 'Make space for recovery',
+            body:
+                'Your energy is low today. A slower pace, hydration, and rest may feel supportive.',
+          )
+        : phase == 'Luteal phase'
+            ? const WellnessInsight(
+                icon: Icons.self_improvement_rounded,
+                title: 'A gentler rhythm may help',
+                body:
+                    'Energy can shift in this phase. Notice what your body asks for and adjust without pressure.',
+              )
+            : const WellnessInsight(
+                icon: Icons.spa_outlined,
+                title: 'Consistency builds clarity',
+                body:
+                    'A ten-second daily check-in makes future patterns and estimates more useful.',
+              );
     return page([
       Row(children: [
         Expanded(
-            child: heading('Good morning', displayName ?? 'Your cycle',
-                'Your private patterns at a glance')),
-        CircleAvatar(
-            backgroundColor: rose,
-            child: Text((session?.user.email ?? 'A')[0].toUpperCase(),
-                style:
-                    const TextStyle(color: plum, fontWeight: FontWeight.bold)))
+          child: heading(
+            'Your private space',
+            'Good morning,\n${displayName ?? 'friend'}',
+            'A gentle look at today—only visible to you.',
+          ),
+        ),
+        Semantics(
+          label: 'Private profile',
+          button: true,
+          child: CircleAvatar(
+              radius: 23,
+              backgroundColor: rose,
+              child: Text(
+                  (displayName ?? session?.user.email ?? 'A')[0].toUpperCase(),
+                  style: const TextStyle(
+                      color: plum, fontWeight: FontWeight.w800))),
+        ),
       ]),
-      card('Next period estimate', [
-        Text(next == null ? 'Add your first period' : formatDate(next),
-            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w800)),
-        if (next != null)
-          Text(
-              '${next.difference(DateUtils.dateOnly(DateTime.now())).inDays} days',
-              style: const TextStyle(color: coral)),
-        button('Log or update a period', showPeriodLogger),
-      ]),
-      Row(children: [
-        metric('$average', 'day cycle'),
-        metric(
-            '${next?.difference(DateUtils.dateOnly(DateTime.now())).inDays ?? '—'}',
-            'days to go'),
-        metric('${cycles.length}', 'past cycles')
-      ]),
-      const SizedBox(height: 18),
-      todayWellnessCard(),
-      const SizedBox(height: 12),
+      CycleTodayHero(
+        cycleDay: cycleDay,
+        phase: phase,
+        nextPeriodLabel: next == null ? 'your next period' : formatDate(next),
+        daysToGo: daysToGo,
+        confidence: confidence,
+        isCheckedIn: checkedIn,
+        reduceMotion: reduceMotion,
+        onCheckIn: () => showDayLogger(today),
+        guide: WellnessGuide(
+          controller: guideController,
+          screen: 0,
+          isCheckedIn: checkedIn,
+          reduceMotion: reduceMotion,
+        ),
+      ),
+      const SizedBox(height: 26),
+      WellnessHistoryStrip(
+        days: week,
+        hasLog: hasDayLog,
+        onSelected: showDayLogger,
+      ),
+      const SizedBox(height: 22),
+      insight,
+      const SizedBox(height: 24),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        const Text('Recent periods',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        const Text('Your recent cycles',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
         TextButton(
             onPressed: () => setState(() => tab = 1),
-            child: const Text('View all ›'))
+            child: const Text('See insights'))
       ]),
-      for (var i = 0; i < cycles.take(3).length; i++) periodRow(cycles[i], i),
-      const SizedBox(height: 12),
-      Row(children: [
-        Expanded(
-            child: shortcut(Icons.view_week_outlined, 'Cycle insights',
-                'Patterns & wellness', () => setState(() => tab = 1))),
-        const SizedBox(width: 12),
-        Expanded(
-            child: shortcut(
-                Icons.favorite,
-                link == null ? 'Pair securely' : 'Connected',
-                link == null ? 'With someone you trust' : 'With your partner',
-                () => setState(() => tab = link == null ? 3 : 2),
-                color: sage))
-      ]),
+      if (cycles.isEmpty)
+        card('Start with one date', [
+          const Text(
+              'Log your latest period to unlock phase guidance and predictions.'),
+          button('Log a period', showPeriodLogger),
+        ])
+      else
+        for (var i = 0; i < cycles.take(2).length; i++) periodRow(cycles[i], i),
+      button('Log or update a period', showPeriodLogger, secondary: true),
     ]);
   }
 
@@ -1314,7 +1519,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final flowInfo = flowKey != null ? flowMeta[flowKey] : null;
     final energyKey = log?['energy'] as String?;
     final energyInfo = energyKey != null ? energyMeta[energyKey] : null;
-    final symptoms = (log?['symptoms'] as List?)?.whereType<String>().toList() ?? [];
+    final symptoms =
+        (log?['symptoms'] as List?)?.whereType<String>().toList() ?? [];
     final note = log?['note'] as String?;
 
     return card('Today’s wellness', [
@@ -1354,7 +1560,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           children: [
             if (moodInfo != null)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: moodInfo.color,
                   borderRadius: BorderRadius.circular(12),
@@ -1365,7 +1572,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             if (flowInfo != null && flowKey != 'none')
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: rose.withValues(alpha: .6),
                   borderRadius: BorderRadius.circular(12),
@@ -1376,7 +1584,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             if (energyInfo != null)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: sage.withValues(alpha: .4),
                   borderRadius: BorderRadius.circular(12),
@@ -1446,7 +1655,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           style: OutlinedButton.styleFrom(
             foregroundColor: plum,
             side: const BorderSide(color: line),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
       ];
@@ -1458,7 +1668,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final flowInfo = flowKey != null ? flowMeta[flowKey] : null;
     final energyKey = log['energy'] as String?;
     final energyInfo = energyKey != null ? energyMeta[energyKey] : null;
-    final symptoms = (log['symptoms'] as List?)?.whereType<String>().toList() ?? [];
+    final symptoms =
+        (log['symptoms'] as List?)?.whereType<String>().toList() ?? [];
     final note = log['note'] as String?;
 
     return [
@@ -1474,7 +1685,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             GestureDetector(
               onTap: () => showDayLogger(date),
               child: const Text('Edit ›',
-                  style: TextStyle(color: plum, fontWeight: FontWeight.w700, fontSize: 13)),
+                  style: TextStyle(
+                      color: plum, fontWeight: FontWeight.w700, fontSize: 13)),
             ),
         ],
       ),
@@ -1492,7 +1704,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
               child: Text(
                 '${moodInfo.emoji} ${moodInfo.label}',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ink),
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w600, color: ink),
               ),
             ),
           if (flowInfo != null && flowKey != 'none')
@@ -1504,7 +1717,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
               child: Text(
                 '${flowInfo.icon} ${flowInfo.label}',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ink),
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w600, color: ink),
               ),
             ),
           if (energyInfo != null)
@@ -1516,7 +1730,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
               child: Text(
                 '${energyInfo.icon} ${energyInfo.label} energy',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ink),
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w600, color: ink),
               ),
             ),
         ],
@@ -1641,6 +1856,44 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   calendarMode == 3 ? 'Cycle insights' : 'Cycle calendar',
                   'Patterns based on your logged history'))
         ]),
+        Container(
+          padding: const EdgeInsets.all(20),
+          margin: const EdgeInsets.only(bottom: 18),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xfff6edf4), Color(0xfffffaf7)],
+            ),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: line),
+          ),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Row(children: [
+              Icon(Icons.auto_awesome_rounded, color: plum, size: 19),
+              SizedBox(width: 8),
+              Text('Your cycle story',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+            ]),
+            const SizedBox(height: 7),
+            Text(
+              cycles.length < 2
+                  ? 'Keep logging to reveal your personal rhythm. Two or more cycles will begin to show useful patterns.'
+                  : 'Across ${cycles.length} cycles, your average is $averageCycleLength days with ${regularity.round()}% regularity.',
+              style: TextStyle(color: ink.withValues(alpha: .67), height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            Row(children: [
+              metric('$averageCycleLength', 'day average'),
+              metric('${averagePeriodLength}d', 'period length'),
+              metric('${dayLogs.length}', 'check-ins'),
+            ]),
+            WellnessGuide(
+              screen: 1,
+              isCheckedIn: hasDayLog(DateUtils.dateOnly(DateTime.now())),
+              reduceMotion: MediaQuery.disableAnimationsOf(context),
+            ),
+          ]),
+        ),
         SegmentedButton<int>(
             segments: const [
               ButtonSegment(value: 0, label: Text('Month')),
@@ -1948,11 +2201,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final periodDurs = _periodDurations;
     final symptomCounts = _symptomCounts;
     final flowCounts = _flowCounts;
-    final totalWithSymptoms = cycles.where((c) =>
-        (c['symptoms'] as List?)?.isNotEmpty == true).length +
-        dayLogs.where((dl) => (dl['symptoms'] as List?)?.isNotEmpty == true).length;
+    final totalWithSymptoms = cycles
+            .where((c) => (c['symptoms'] as List?)?.isNotEmpty == true)
+            .length +
+        dayLogs
+            .where((dl) => (dl['symptoms'] as List?)?.isNotEmpty == true)
+            .length;
     final totalFlowed = cycles.length +
-        dayLogs.where((dl) => dl['flow'] != null && dl['flow'] != 'none').length;
+        dayLogs
+            .where((dl) => dl['flow'] != null && dl['flow'] != 'none')
+            .length;
 
     // fertile window estimate
     final nextPeriod = predictedNext;
@@ -2040,7 +2298,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           child: _miniCard(
             icon: Icons.auto_graph_rounded,
             label: 'Prediction',
-            value: cycles.length >= 3 ? 'High' : cycles.length == 2 ? 'Medium' : 'Low',
+            value: cycles.length >= 3
+                ? 'High'
+                : cycles.length == 2
+                    ? 'Medium'
+                    : 'Low',
             valueColor: cycles.length >= 3
                 ? const Color(0xff6d8b70)
                 : cycles.length == 2
@@ -2125,9 +2387,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     ),
                     const SizedBox(width: 2),
                     Text(
-                      trend == 0
-                          ? 'same'
-                          : '${trend > 0 ? '+' : ''}$trend d',
+                      trend == 0 ? 'same' : '${trend > 0 ? '+' : ''}$trend d',
                       style: TextStyle(
                         fontSize: 9,
                         color: trend > 0
@@ -2144,19 +2404,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 const SizedBox(height: 0),
               Text(
                 value,
-                style: const TextStyle(
-                    fontSize: 22, fontWeight: FontWeight.w800),
+                style:
+                    const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
               ),
               Text(
                 label,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                style:
+                    const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
               ),
               Text(
                 footer,
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                    fontSize: 9, color: ink.withValues(alpha: .5)),
+                style: TextStyle(fontSize: 9, color: ink.withValues(alpha: .5)),
               ),
             ],
           ),
@@ -2165,9 +2425,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   // ── generic stats card wrapper ───────────────────────────────────────────────
   Widget _statsCard(
-          {required String title,
-          String? subtitle,
-          required Widget child}) =>
+          {required String title, String? subtitle, required Widget child}) =>
       Container(
         width: double.infinity,
         margin: const EdgeInsets.only(bottom: 14),
@@ -2181,8 +2439,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title,
-                style: const TextStyle(
-                    fontSize: 15, fontWeight: FontWeight.w700)),
+                style:
+                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
             if (subtitle != null)
               Padding(
                 padding: const EdgeInsets.only(top: 2, bottom: 12),
@@ -2230,8 +2488,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               final i = e.key;
               final l = e.value;
               final isLast = i == lengths.length - 1;
-              final fraction =
-                  range == 0 ? 1.0 : (l - minL) / range;
+              final fraction = range == 0 ? 1.0 : (l - minL) / range;
               final barH = minBarH + fraction * (chartH - minBarH);
               return Expanded(
                 child: Padding(
@@ -2243,9 +2500,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         '$l',
                         style: TextStyle(
                           fontSize: 10,
-                          fontWeight: isLast
-                              ? FontWeight.w700
-                              : FontWeight.normal,
+                          fontWeight:
+                              isLast ? FontWeight.w700 : FontWeight.normal,
                           color: isLast ? plum : ink.withValues(alpha: .6),
                         ),
                       ),
@@ -2253,9 +2509,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       Container(
                         height: barH,
                         decoration: BoxDecoration(
-                          color: isLast
-                              ? plum
-                              : rose.withValues(alpha: .8),
+                          color: isLast ? plum : rose.withValues(alpha: .8),
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
@@ -2304,9 +2558,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         style: TextStyle(
                             fontSize: 9,
                             color: isLast ? plum : ink.withValues(alpha: .5),
-                            fontWeight: isLast
-                                ? FontWeight.w700
-                                : FontWeight.normal)),
+                            fontWeight:
+                                isLast ? FontWeight.w700 : FontWeight.normal)),
                     const SizedBox(height: 2),
                     Container(
                       height: barH,
@@ -2360,8 +2613,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             const SizedBox(width: 10),
             SizedBox(
               width: 34,
-              child: Text(
-                  '${(pct * 100).round()}%',
+              child: Text('${(pct * 100).round()}%',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                       fontSize: 11,
@@ -2409,8 +2661,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             const SizedBox(width: 8),
             SizedBox(
               width: 36,
-              child: Text(
-                  '${(pct * 100).round()}%',
+              child: Text('${(pct * 100).round()}%',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                       fontSize: 11,
@@ -2425,7 +2676,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   // ── fertile window card ──────────────────────────────────────────────────────
   Widget _fertileCard(
-      DateTime fertileStart, DateTime ovulation, DateTime fertileEnd) =>
+          DateTime fertileStart, DateTime ovulation, DateTime fertileEnd) =>
       Column(children: [
         Row(children: [
           _fertileChip(Icons.local_florist_rounded, 'Fertile window starts',
@@ -2454,23 +2705,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ),
       ]);
 
-  Widget _fertileChip(
-          IconData icon, String title, String date, Color bg) =>
+  Widget _fertileChip(IconData icon, String title, String date, Color bg) =>
       Expanded(
         child: Container(
           padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-              color: bg, borderRadius: BorderRadius.circular(14)),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          decoration:
+              BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Icon(icon, size: 18, color: plum),
             const SizedBox(height: 6),
             Text(title,
-                style: TextStyle(
-                    fontSize: 10, color: ink.withValues(alpha: .55))),
+                style:
+                    TextStyle(fontSize: 10, color: ink.withValues(alpha: .55))),
             const SizedBox(height: 2),
             Text(date,
-                style: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w700)),
+                style:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ]),
         ),
       );
@@ -2502,8 +2753,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     fontWeight: FontWeight.w800,
                     color: valueColor)),
             Text(label,
-                style: TextStyle(
-                    fontSize: 11, color: ink.withValues(alpha: .55))),
+                style:
+                    TextStyle(fontSize: 11, color: ink.withValues(alpha: .55))),
           ]),
         ]),
       );
@@ -2524,6 +2775,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             role == 'owner'
                 ? 'Thoughtful notes. Small surprises.'
                 : 'Create something kind for your partner.'),
+        WellnessGuide(
+          screen: 2,
+          isCheckedIn: hasDayLog(DateUtils.dateOnly(DateTime.now())),
+          reduceMotion: MediaQuery.disableAnimationsOf(context),
+        ),
         if (role == 'partner' && link != null) ...[
           Wrap(
               spacing: 8,
@@ -2538,28 +2794,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           button('Create a moment', sendNote),
         ] else if (role == 'owner') ...[
           if (notes.isEmpty)
-            card('No moments yet',
-                [const Text('When your partner writes, you’ll find it here.')]),
+            const ExpressiveEmptyState(
+              icon: Icons.mark_email_unread_outlined,
+              title: 'A quiet place for little moments',
+              body:
+                  'When your partner sends something thoughtful, it will appear here without revealing the message in a notification.',
+            ),
+          if (notes.isEmpty) const SizedBox(height: 16),
           for (final note in notes)
-            ListTile(
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                tileColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: const BorderSide(color: line)),
-                leading: CircleAvatar(
-                    backgroundColor:
-                        (noteDesign[note['style']] ?? noteDesign['letter']!)
-                            .color,
-                    child: Text(noteDesign[note['style']]?.icon ?? '✉')),
-                title: Text(note['opened_at'] == null
-                    ? 'A new little surprise'
-                    : 'A little note for you'),
-                subtitle: const Text('From your partner'),
-                trailing: Text((note['created_at'] as String).substring(0, 10),
-                    style: const TextStyle(fontSize: 10)),
-                onTap: () => openNote(note)),
+            Semantics(
+              label: note['opened_at'] == null
+                  ? 'Unread private moment from your partner'
+                  : 'Opened private moment from your partner',
+              child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  tileColor: note['opened_at'] == null ? blush : Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: const BorderSide(color: line)),
+                  leading: CircleAvatar(
+                      backgroundColor:
+                          (noteDesign[note['style']] ?? noteDesign['letter']!)
+                              .color,
+                      child: Text(noteDesign[note['style']]?.icon ?? '✉')),
+                  title: Text(note['opened_at'] == null
+                      ? 'A new little surprise'
+                      : 'A little note for you'),
+                  subtitle: const Text('From your partner'),
+                  trailing: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (note['opened_at'] == null)
+                        const CircleAvatar(radius: 4, backgroundColor: plum),
+                      const SizedBox(height: 5),
+                      Text((note['created_at'] as String).substring(0, 10),
+                          style: const TextStyle(fontSize: 10)),
+                    ],
+                  ),
+                  onTap: () => openNote(note)),
+            ),
           const SizedBox(height: 14),
           button('Enable discreet notifications', requestNotificationPermission,
               secondary: true),
@@ -2606,18 +2880,41 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ? 'Connect with your\npartner'
                 : 'Connected with ${ownerName ?? 'your partner'}',
             'One private connection. Always your choice.'),
+        if (link == null)
+          PrivacyBanner(
+            title: role == 'owner'
+                ? 'You control what gets shared'
+                : 'Know what you are accepting',
+            body: role == 'owner'
+                ? 'Your partner can see shared cycle timing, send private moments, and add reflections. Private notes remain yours.'
+                : 'Connecting lets you see shared cycle timing and send moments. The owner can disconnect at any time.',
+            icon: Icons.visibility_outlined,
+          ),
+        if (link == null) const SizedBox(height: 16),
         if (link == null && role == 'owner') ...[
           card('Your invite code', [
             if (invite == null)
-              const Text('Create a one-time code that expires in 10 minutes.')
+              const Text(
+                  'Create a single-use code. Only share it with the person you trust.')
             else
-              Center(
-                  child: Text(invite!,
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                    color: softLilac, borderRadius: BorderRadius.circular(18)),
+                child: Column(children: [
+                  Text(invite!,
                       style: const TextStyle(
                           fontSize: 24,
                           letterSpacing: 4,
-                          fontWeight: FontWeight.w800))),
-            button('Create invite code', createInvite),
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 6),
+                  const Text('Expires in 10 minutes · one use only',
+                      style: TextStyle(fontSize: 11, color: plum)),
+                ]),
+              ),
+            button(invite == null ? 'Create invite code' : 'Create a new code',
+                createInvite),
             Row(children: [
               Expanded(
                   child: button(
@@ -2627,9 +2924,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ])
           ]),
         ] else if (link == null) ...[
-          card('Enter a code', [
+          card('Use a shared code', [
             input(pairingCode, '12-character invite code'),
             button('Connect securely', acceptInvite),
+          ]),
+          card('Or find her nearby', [
+            const Text(
+                'Nearby pairing uses Bluetooth and never broadcasts cycle information.'),
             button(nearbyScanning ? 'Stop nearby scan' : 'Scan nearby',
                 nearbyScanning ? stopNearby : scanNearby,
                 secondary: true),
@@ -2649,7 +2950,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             Text(role == 'owner'
                 ? 'Your partner can support you with notes and shared reflections.'
                 : 'You can view shared cycle timing and send thoughtful moments.'),
-            button('Disconnect partner', unlink, secondary: true)
+            const SizedBox(height: 8),
+            const PrivacyBanner(
+              title: 'Connection active',
+              body:
+                  'Only this paired account has access. Disconnecting ends shared access for both people.',
+              icon: Icons.lock_person_outlined,
+              tone: Color(0xffeef4ec),
+            ),
+            button('Disconnect partner', confirmUnlink, secondary: true)
           ]),
         card(
             'Private by design',
@@ -2688,7 +2997,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         else
           card('Connected with ${ownerName ?? 'your partner'}', [
             const Text('Your private connection is active.'),
-            button('Disconnect partner', unlink, secondary: true)
+            button('Disconnect partner', confirmUnlink, secondary: true)
           ])
       ]);
 
