@@ -4,3 +4,8 @@
 .pub-cache/
 .pub/
 /build/
+
+# Credentials and private keys
+*-firebase-adminsdk-*.json
+*.env*
+supabase/.temp/

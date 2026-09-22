@@ -39,22 +39,39 @@ class MainActivity : FlutterActivity() {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             scanResultsSeen++
-            if (scanResultsSeen == 1 || scanResultsSeen % 10 == 0) {
-                channel?.invokeMethod("scanProgress", scanResultsSeen)
+            val seen = scanResultsSeen
+            runOnUiThread {
+                channel?.invokeMethod("scanProgress", seen)
             }
-            val bytes = result.scanRecord?.getServiceData(service) ?: return
-            if (bytes.size != 6) return
+            val record = result.scanRecord ?: return
+            var bytes = record.getServiceData(service)
+            if (bytes == null) {
+                val map = record.serviceData
+                if (map != null) {
+                    for ((uuid, data) in map) {
+                        if (uuid.uuid == service.uuid) {
+                            bytes = data
+                            break
+                        }
+                    }
+                }
+            }
+            if (bytes == null || bytes.size != 6) return
             val code = bytes.joinToString("") { "%02X".format(it.toInt() and 0xff) }
             val now = System.currentTimeMillis()
             if (code == lastFoundCode && now - lastFoundAt < 3000) return
             lastFoundCode = code
             lastFoundAt = now
-            Log.d("MahilaNearby", "Mahila invitation advertisement found")
-            channel?.invokeMethod("found", code)
+            Log.d("MahilaNearby", "Mahila invitation advertisement found: $code")
+            runOnUiThread {
+                channel?.invokeMethod("found", code)
+            }
         }
         override fun onScanFailed(errorCode: Int) {
             scanning = false
-            channel?.invokeMethod("error", "Bluetooth scan failed ($errorCode)")
+            runOnUiThread {
+                channel?.invokeMethod("error", "Bluetooth scan failed ($errorCode)")
+            }
         }
     }
 
@@ -89,10 +106,19 @@ class MainActivity : FlutterActivity() {
     private fun execute(call: MethodCall, result: MethodChannel.Result) {
         val adapter = (getSystemService(BLUETOOTH_SERVICE) as BluetoothManager).adapter
         if (adapter == null || !adapter.isEnabled) { result.error("bluetooth_off", "Turn on Bluetooth first", null); return }
+        if (Build.VERSION.SDK_INT < 31 && call.method == "startScan") {
+            val locationManager = getSystemService(LOCATION_SERVICE) as? android.location.LocationManager
+            val locationEnabled = locationManager?.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) == true ||
+                locationManager?.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER) == true
+            if (!locationEnabled) {
+                result.error("location_off", "Turn on device Location to scan for nearby devices", null)
+                return
+            }
+        }
         try {
             when (call.method) {
                 "startAdvertising" -> {
-                    val code = call.argument<String>("code") ?: ""
+                    val code = (call.argument<String>("code") ?: "").trim().replace("\"", "").uppercase()
                     if (!Regex("[0-9A-F]{12}").matches(code)) { result.error("invalid_code", "Create a new invite first", null); return }
                     if (advertising && advertisedCode == code) {
                         result.success(mapOf("status" to "already_advertising"))
@@ -102,17 +128,31 @@ class MainActivity : FlutterActivity() {
                     stopAdvertising()
                     advertiser = adapter.bluetoothLeAdvertiser
                     if (advertiser == null) { result.error("unsupported", "This phone cannot advertise over BLE", null); return }
-                    val settings = AdvertiseSettings.Builder().setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                        .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM).setConnectable(false).build()
-                    val data = AdvertiseData.Builder().setIncludeDeviceName(false).addServiceData(service, bytes).build()
+                    val settings = AdvertiseSettings.Builder()
+                        .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                        .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                        .setConnectable(false)
+                        .build()
+                    val data = AdvertiseData.Builder()
+                        .setIncludeDeviceName(false)
+                        .setIncludeTxPowerLevel(false)
+                        .addServiceData(service, bytes)
+                        .build()
+                    val scanResponse = AdvertiseData.Builder()
+                        .setIncludeDeviceName(false)
+                        .setIncludeTxPowerLevel(false)
+                        .addServiceUuid(service)
+                        .build()
                     val callback = object : AdvertiseCallback() {
                         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
                             if (advertiseCallback !== this) return
                             advertising = true
                             advertisedCode = code
-                            Log.d("MahilaNearby", "BLE advertising started")
-                            advertiseStartResult?.success(mapOf("status" to "started"))
-                            advertiseStartResult = null
+                            Log.d("MahilaNearby", "BLE advertising started with code $code")
+                            runOnUiThread {
+                                advertiseStartResult?.success(mapOf("status" to "started"))
+                                advertiseStartResult = null
+                            }
                         }
 
                         override fun onStartFailure(errorCode: Int) {
@@ -127,14 +167,16 @@ class MainActivity : FlutterActivity() {
                                 else -> "Bluetooth advertising failed ($errorCode)"
                             }
                             Log.e("MahilaNearby", reason)
-                            advertiseStartResult?.error("advertise_failed", reason, null)
-                            advertiseStartResult = null
-                            advertiseCallback = null
+                            runOnUiThread {
+                                advertiseStartResult?.error("advertise_failed", reason, null)
+                                advertiseStartResult = null
+                                advertiseCallback = null
+                            }
                         }
                     }
                     advertiseCallback = callback
                     advertiseStartResult = result
-                    advertiser!!.startAdvertising(settings, data, callback)
+                    advertiser!!.startAdvertising(settings, data, scanResponse, callback)
                 }
                 "startScan" -> {
                     stopScan()
@@ -143,9 +185,30 @@ class MainActivity : FlutterActivity() {
                     lastFoundAt = 0L
                     scanner = adapter.bluetoothLeScanner
                     if (scanner == null) { result.error("unsupported", "This phone cannot scan BLE", null); return }
-                    val filters = listOf(ScanFilter.Builder().setServiceData(service, byteArrayOf()).build())
-                    scanner!!.startScan(filters, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
-                    scanning = true
+                    val scanSettings = ScanSettings.Builder()
+                        .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                        .setReportDelay(0)
+                        .build()
+                    val filters = listOf(
+                        ScanFilter.Builder().setServiceData(service, null).build(),
+                        ScanFilter.Builder().setServiceUuid(service).build()
+                    )
+                    try {
+                        scanner!!.startScan(filters, scanSettings, scanCallback)
+                        scanning = true
+                        Log.d("MahilaNearby", "BLE scanning started with service filters")
+                    } catch (e: Exception) {
+                        Log.w("MahilaNearby", "Filtered scan failed, attempting single filter fallback", e)
+                        try {
+                            val singleFilter = listOf(ScanFilter.Builder().setServiceData(service, null).build())
+                            scanner!!.startScan(singleFilter, scanSettings, scanCallback)
+                            scanning = true
+                        } catch (e2: Exception) {
+                            Log.e("MahilaNearby", "Scan attempts failed", e2)
+                            result.error("scan_failed", e2.message ?: "Failed to start BLE scan", null)
+                            return
+                        }
+                    }
                     result.success(null)
                 }
                 else -> result.notImplemented()

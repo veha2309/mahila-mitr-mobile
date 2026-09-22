@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "298426492463",
+    "project_id": "mahila-mitr",
+    "storage_bucket": "mahila-mitr.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:298426492463:android:e982f626e4014bb38648da",
+        "android_client_info": {
+          "package_name": "com.example.mahila_mitr"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA0vIYkrfJcqfSEDpxDnwbP0Q2-slHUzb8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

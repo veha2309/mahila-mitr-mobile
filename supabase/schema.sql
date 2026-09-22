@@ -12,6 +12,8 @@ create table public.links (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null unique references auth.users(id) on delete cascade,
   partner_id uuid not null unique references auth.users(id) on delete cascade,
+  owner_nickname text check (owner_nickname is null or char_length(trim(owner_nickname)) between 1 and 30),
+  partner_nickname text check (partner_nickname is null or char_length(trim(partner_nickname)) between 1 and 30),
   created_at timestamptz not null default now(),
   check (owner_id <> partner_id)
 );
@@ -171,13 +173,35 @@ begin
   delete from public.links where owner_id = auth.uid() or partner_id = auth.uid();
 end $$;
 
+create or replace function public.set_partner_nickname(new_nickname text)
+returns void language plpgsql security definer set search_path = '' as $$
+declare cleaned text := nullif(trim(new_nickname), '');
+begin
+  if auth.uid() is null then raise exception 'Sign in first'; end if;
+  if cleaned is not null and char_length(cleaned) > 30 then
+    raise exception 'Nickname must be 30 characters or fewer';
+  end if;
+
+  update public.links
+  set partner_nickname = cleaned
+  where owner_id = auth.uid();
+  if found then return; end if;
+
+  update public.links
+  set owner_nickname = cleaned
+  where partner_id = auth.uid();
+  if not found then raise exception 'No active partner connection'; end if;
+end $$;
+
 revoke all on function public.create_invite() from public, anon;
 revoke all on function public.accept_invite(text) from public, anon;
 revoke all on function public.preview_invite(text) from public, anon;
 revoke all on function public.open_note(uuid) from public, anon;
 revoke all on function public.unlink_partner() from public, anon;
+revoke all on function public.set_partner_nickname(text) from public, anon;
 grant execute on function public.create_invite() to authenticated;
 grant execute on function public.accept_invite(text) to authenticated;
 grant execute on function public.preview_invite(text) to authenticated;
 grant execute on function public.open_note(uuid) to authenticated;
 grant execute on function public.unlink_partner() to authenticated;
+grant execute on function public.set_partner_nickname(text) to authenticated;

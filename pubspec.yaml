@@ -11,6 +11,8 @@ dependencies:
   shared_preferences: ^2.5.0
   flutter_local_notifications: ^20.0.0
   rive: ^0.14.11
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
