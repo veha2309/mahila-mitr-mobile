@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config.dart';
+import 'chat_widgets.dart';
 import 'premium_widgets.dart';
 import 'wellness_guide.dart';
 
@@ -4359,7 +4360,7 @@ class PrivateRoomPage extends StatefulWidget {
 }
 
 class _PrivateRoomPageState extends State<PrivateRoomPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   // ── state ──
   List<Map<String, dynamic>> _conversations = [];
   Map<String, dynamic>? _activeConvo;
@@ -4374,6 +4375,10 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
   final _msgFocusNode = FocusNode();
   final _subjectController = TextEditingController(text: 'Private chat');
   final _scrollController = ScrollController();
+  final _messageViewportKey = GlobalKey();
+  Timer? _refreshTimer;
+  bool _refreshing = false;
+  int _refreshTicks = 0;
 
   static const _statuses = [
     '🌙 Resting',
@@ -4386,6 +4391,16 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted ||
+          WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed ||
+          ModalRoute.of(context)?.isCurrent != true) {
+        return;
+      }
+      setState(() {});
+      if (++_refreshTicks % 15 == 0) _refreshRoom();
+    });
     _currentPartnerNickname =
         widget.partnerNickname.isNotEmpty ? widget.partnerNickname : null;
     _conversations = List.from(widget.initialConversations);
@@ -4396,12 +4411,62 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _refreshTimer?.cancel();
     _stopRealtime();
     _msgController.dispose();
     _msgFocusNode.dispose();
     _subjectController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshRoom();
+  }
+
+  Future<void> _refreshRoom() async {
+    if (_refreshing || !mounted) return;
+    _refreshing = true;
+    try {
+      final rows = await widget.client.rpc('get_ephemeral_conversations');
+      if (!mounted) return;
+      final conversations = List<Map<String, dynamic>>.from(rows as List);
+      final activeId = _activeConvo?['id'];
+      setState(() {
+        _conversations = conversations;
+        final matches = conversations.where((c) => c['id'] == activeId);
+        _activeConvo = matches.isEmpty ? null : matches.first;
+      });
+      if (_activeConvo != null) {
+        await _reloadMessages(_activeConvo!['id'] as String);
+      } else if (conversations.isNotEmpty) {
+        await _openConversation(conversations.first);
+      } else {
+        _stopRealtime();
+        setState(() {
+          _messages = [];
+          _replyingTo = null;
+        });
+      }
+    } catch (e) {
+      debugPrint('Room refresh failed: $e');
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _acknowledgeMessage(Map<String, dynamic> message) async {
+    final conversationId = _activeConvo?['id'] as String?;
+    if (conversationId == null) return;
+    await widget.client.rpc('mark_ephemeral_messages_read', params: {
+      'target_conversation_id': conversationId,
+      'message_ids': [message['id']],
+    });
+    if (mounted && _activeConvo?['id'] == conversationId) {
+      await _reloadMessages(conversationId);
+    }
   }
 
   // ── name helpers ──
@@ -4528,7 +4593,7 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
     _channel = widget.client
         .channel('chat-$conversationId')
         .onPostgresChanges(
-          event: PostgresChangeEvent.insert,
+          event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'ephemeral_messages',
           filter: PostgresChangeFilter(
@@ -4565,18 +4630,25 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
   }
 
   Future<void> _reloadMessages(String conversationId) async {
+    final scrollToEnd = _loading ||
+        (_scrollController.hasClients &&
+            _scrollController.position.extentAfter < 80);
     try {
       final rows = await widget.client.rpc('get_ephemeral_messages',
           params: {'target_conversation_id': conversationId});
       final msgs = List<Map<String, dynamic>>.from(
           (rows as List).map((e) => Map<String, dynamic>.from(e as Map)));
-      if (mounted) {
+      if (mounted && _activeConvo?['id'] == conversationId) {
         setState(() {
+          _error = null;
           _messages = msgs;
           _loading = false;
         });
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
+          if (mounted &&
+              _activeConvo?['id'] == conversationId &&
+              scrollToEnd &&
+              _scrollController.hasClients) {
             _scrollController.animateTo(
               _scrollController.position.maxScrollExtent,
               duration: const Duration(milliseconds: 300),
@@ -4606,6 +4678,7 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
         'id': id.toString(),
         'subject': subject,
         'message_count': 0,
+        'ttl_minutes': 60,
       };
       if (mounted) {
         setState(() {
@@ -4639,7 +4712,7 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
 
   Future<void> _sendMessage({String kind = 'message'}) async {
     final body = _msgController.text.trim();
-    if (body.isEmpty || _activeConvo == null) return;
+    if (_sending || body.isEmpty || _activeConvo == null) return;
     final replyId = _replyingTo?['id'] as String?;
     setState(() => _sending = true);
     try {
@@ -4668,6 +4741,7 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
   }
 
   Future<void> _sendStatus(String status) async {
+    if (_sending) return;
     if (_activeConvo == null) {
       // Create a default convo if none exists
       setState(() => _sending = true);
@@ -4681,6 +4755,7 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
           'id': id.toString(),
           'subject': 'Status updates',
           'message_count': 0,
+          'ttl_minutes': 120,
         };
         setState(() {
           _conversations = [convo, ..._conversations];
@@ -4818,6 +4893,7 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
             _buildStatusBar(),
             // Conversation tabs (if multiple)
             if (_conversations.length > 1) _buildConvoTabs(),
+            if (_activeConvo != null) _buildLifetimeBanner(),
             // Messages
             Expanded(child: _buildMessageList()),
             // Input
@@ -4826,6 +4902,93 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
         ],
       ),
     );
+  }
+
+  Widget _buildLifetimeBanner() {
+    final minutes = _activeConvo?['ttl_minutes'] as int? ?? 60;
+    final duration = minutes < 60 ? '$minutes min' : '${minutes ~/ 60} hr';
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .88),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: line),
+      ),
+      child: Row(children: [
+        const Icon(Icons.hourglass_bottom_rounded, size: 21, color: plum),
+        const SizedBox(width: 10),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(_activeConvo?['subject'] as String? ?? 'Private conversation',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style:
+                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+          const SizedBox(height: 3),
+          Text('Disappears $duration after reading. Unread messages stay.',
+              style:
+                  TextStyle(fontSize: 11, color: ink.withValues(alpha: .65))),
+        ])),
+        IconButton(
+            tooltip: 'Message timer',
+            onPressed: _showTimerSettings,
+            icon: const Icon(Icons.tune_rounded, color: plum, size: 20)),
+      ]),
+    );
+  }
+
+  Future<void> _showTimerSettings() async {
+    final conversationId = _activeConvo?['id'] as String?;
+    if (conversationId == null) return;
+    final minutes = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: cream,
+      builder: (ctx) => SafeArea(
+          child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 0, 22, 20),
+        child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Time together, on your terms',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              const Text(
+                  'Choose how long new messages stay after the recipient reads them. Existing messages keep their timer. The room disappears after its last message expires.'),
+              const SizedBox(height: 16),
+              for (final choice in <int, String>{
+                10: '10 minutes',
+                60: '1 hour',
+                120: '2 hours',
+                1440: '24 hours'
+              }.entries)
+                ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.timer_outlined, color: plum),
+                    title: Text(choice.value),
+                    trailing: _activeConvo?['ttl_minutes'] == choice.key
+                        ? const Icon(Icons.check_circle, color: plum)
+                        : null,
+                    onTap: () => Navigator.pop(ctx, choice.key)),
+            ]),
+      )),
+    );
+    if (minutes == null || !mounted) return;
+    try {
+      await widget.client.rpc('update_conversation_expiry', params: {
+        'target_conversation_id': conversationId,
+        'new_ttl_minutes': minutes,
+      });
+      await _refreshRoom();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not update timer: $e')));
+      }
+    }
   }
 
   Widget _buildStatusBar() => Container(
@@ -4934,11 +5097,53 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
             style: TextStyle(color: Color(0xff9e8fa8))),
       );
     }
+    final liveMessages = _messages.where((m) {
+      final expiry = DateTime.tryParse(m['expires_at'] as String? ?? '');
+      return expiry == null || expiry.isAfter(DateTime.now());
+    }).toList();
     return ListView.builder(
+      key: _messageViewportKey,
       controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      itemCount: _messages.length,
-      itemBuilder: (_, i) => _buildMessage(_messages[i]),
+      itemCount: liveMessages.length,
+      itemBuilder: (_, i) {
+        final message = liveMessages[i];
+        return Column(
+            key: ValueKey(message['id']),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (i == 0 ||
+                  (message['created_at'] as String).substring(0, 10) !=
+                      (liveMessages[i - 1]['created_at'] as String)
+                          .substring(0, 10))
+                Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                        MaterialLocalizations.of(context).formatMediumDate(
+                            DateTime.parse(message['created_at'] as String)
+                                .toLocal()),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 11, color: ink.withValues(alpha: .55)))),
+              ReadAwareMessage(
+                viewportKey: _messageViewportKey,
+                unread: message['sender_id'] != widget.myUserId &&
+                    message['read_at'] == null,
+                onRead: () => _acknowledgeMessage(message),
+                child: _buildMessage(message),
+              ),
+              Padding(
+                  padding: const EdgeInsets.only(left: 6, right: 6, bottom: 12),
+                  child: Text(
+                      messageLifetimeLabel(message, DateTime.now(),
+                          outgoing: message['sender_id'] == widget.myUserId),
+                      textAlign: message['sender_id'] == widget.myUserId
+                          ? TextAlign.right
+                          : TextAlign.left,
+                      style: TextStyle(
+                          fontSize: 11, color: ink.withValues(alpha: .6)))),
+            ]);
+      },
     );
   }
 
@@ -5264,7 +5469,8 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
           const SizedBox(height: 4),
           Align(
             alignment: Alignment.centerLeft,
-            child: Text('Messages disappear after 1 hour.',
+            child: Text(
+                'Messages disappear 1 hour after your partner reads them.',
                 style:
                     TextStyle(fontSize: 13, color: ink.withValues(alpha: .55))),
           ),
@@ -5272,7 +5478,7 @@ class _PrivateRoomPageState extends State<PrivateRoomPage>
           TextField(
             controller: _subjectController,
             decoration: InputDecoration(
-              labelText: 'Topic (optional)',
+              labelText: 'Conversation topic',
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
               ),

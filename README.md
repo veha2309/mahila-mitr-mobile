@@ -38,3 +38,13 @@ Run `supabase/20260925_realtime_hardening.sql` to enforce publication membership
 For Android background and terminated-app push, place the matching `google-services.json` in `android/app`, run `supabase/20260926_push_tokens.sql`, deploy the `push-chat-notification` Edge Function, and set its `FIREBASE_SERVICE_ACCOUNT` secret to a Firebase Admin service-account JSON value. Never commit that service-account credential. The app registers and refreshes FCM tokens automatically; notification content is always the generic “You have a notification”.
 
 Cycle estimates are approximate and should not be used as contraception or medical advice. Pairing gives the partner access to period start history; the pairing screen discloses this before a code is shared. Before a public launch, add account deletion, abuse prevention and rate limits for pairing codes, privacy policy, and a full security review of note access and notifications.
+
+## Read-triggered chat expiry (16 October 2026)
+
+Apply `supabase/20261016_read_triggered_expiry.sql` **before deploying this client**, after the earlier chat migrations. This supersedes the send-time expiry described above. New messages and statuses have no expiry until the recipient views their bubble in the foreground for at least 750 ms. Loading a conversation, notification fetches, sender access, offscreen cached bubbles, and covered/background screens do not acknowledge reads. Only the linked recipient can acknowledge incoming message IDs. Repeated receipts preserve the original read time and deadline.
+
+Each message snapshots the room's default duration at send time. Timer settings affect future messages. Unread messages remain indefinitely; extending them adds to their pending duration without starting the clock. A room persists while any unread or unexpired message remains, and is removed after its last message expires. Empty rooms persist. Cleanup continues to use the existing scheduled function and room API calls.
+
+Existing surviving messages are treated as unread because historical read receipts are unavailable. Messages already deleted by the old expiry policy cannot be restored. Older clients do not send read receipts, so messages they view remain unread until viewed using the updated client.
+
+Validation: `flutter analyze` and `flutter test`. For isolated database regression checks, install `@electric-sql/pglite` into a temporary directory and run `node test/read_expiry_database_test.cjs <path-to-installed-@electric-sql/pglite>`. The test uses an in-memory PostgreSQL database with crypto stubs to verify expiry and authorization; it never connects to the live project. Apply the migration to a staging Supabase project and verify two-account Realtime/push behavior before production rollout.
