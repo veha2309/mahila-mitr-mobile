@@ -1,50 +1,122 @@
-# Mahila Mitr (Flutter)
+<p align="center">
+  <img src="branding/app-icon.png" width="104" alt="Mahila Mitr flower icon">
+</p>
 
-An early Android/iOS app for period tracking and creative notes from a chosen partner. The account owner logs period starts and sees a clearly labeled estimate. A partner joins through a short-lived, single-use pairing code, can view period start logs, and can send a styled note. Both people can record a shared date rating and reflection. The account owner alone can edit period logs. Disconnecting removes the shared link and its notes and ratings.
+# Mahila Mitr
 
-## Run
+Cycle tracking, shared notes, and a private space for you and your partner. Built with Flutter and Supabase, with a floral interface, illustrated stationery, and daily, monthly, and yearly calendars.
 
-1. Create a Supabase project. Email authentication is normally enabled by default. To send an eight-digit code, the **Authentication → Email Templates → Magic Link** message must include `{{ .Token }}`. New free-tier projects using Supabase's default mail service cannot customize Auth templates; configure custom SMTP first to enable this OTP template.
-2. Run `supabase/schema.sql` in the SQL editor.
-3. Run `flutter pub get`.
-4. Start with `flutter run --dart-define=SUPABASE_URL=https://your-project.supabase.co --dart-define=SUPABASE_ANON_KEY=your-publishable-key`. Never place a service-role key in the app.
+**[Download Android APK](https://github.com/veha2309/mahila-mitr-mobile/releases/download/v1.0.0/mahila-mitr.apk)** · **[Release notes](https://github.com/veha2309/mahila-mitr-mobile/releases/tag/v1.0.0)** · [Changelog](CHANGELOG.md)
 
-The Flutter app checks for new notes when it resumes online and displays a generic local notification after the user grants permission. A production background push sender and delivery retries still need to be added before launch.
+**Current release: 1.0.0 · Build 1.** The Android APK is signed with a dedicated release key. Version details are also available in Settings.
 
-The default mail service sends only to email addresses belonging to the Supabase project team and has a very low sending limit. It can help test a template already configured for OTP, but it is not suitable for partner accounts or public users. For this app's code-entry flow, set up an SMTP service, then include `{{ .Token }}` in the Magic Link template. Without that token, Supabase sends a clickable link rather than a code. If email does not arrive, check spam, the project's Auth logs and email settings, and the `SUPABASE_URL` passed to `flutter run`.
+## Inside the app
 
-If sign-in fails, run the app with `flutter run` and read the `Mahila Mitr action failed` line in the Flutter console. The debug app also shows the Supabase error message. Check **Authentication → Logs** in Supabase for a matching failure. The generic message alone cannot identify whether the cause is SMTP, recipient authorization, or connectivity.
+- **Cycle tracking:** log period dates, flow, symptoms, and notes; review your calendar history and cycle estimates.
+- **Partner pairing:** connect through a short-lived, single-use invite code, or nearby Bluetooth pairing on Android. The account owner controls cycle entries.
+- **Moments:** send illustrated flower, letter, and star notes, preview stationery before sending, and revisit received notes.
+- **Private chat:** conversations, replies, statuses, and message timers that begin after the recipient reads the message.
+- **Shared reflections:** record date ratings and reflections together.
+- **Display settings:** choose Automatic, Full, Reduced, or Off effects. Drafts and scroll positions survive navigation, and layouts support larger text.
 
-An emulator test on 15 September 2026 returned HTTP 500 `unexpected_failure: Error sending confirmation email` from Supabase Auth. This means the request reached Supabase and the failure is in email delivery. In **Authentication → SMTP Settings**, verify the host, port, sender address, username, and password. For Gmail, use `smtp.gmail.com`, port `587`, your Gmail address as both username and sender, and a Google App Password (not your account password). Inspect Supabase Auth logs for the SMTP-specific reason, then send a test email after saving. [Supabase's Google SMTP troubleshooting](https://supabase.com/docs/guides/troubleshooting/using-google-smtp-with-supabase-custom-smtp-ZZzU4Y) covers common sender and password mismatches.
+## Preview
 
-Nearby pairing is implemented on Android with a native BLE channel. It advertises only the short-lived six-byte invite value and stops after ten minutes; it does not broadcast a persistent device identifier. Android 12+ requests the Nearby Devices permissions, while older Android versions request location as required by the BLE APIs. Manual invite codes work on every supported platform. iOS Core Bluetooth support is still a launch follow-up, and background proximity alerts are intentionally not promised.
+<p align="center">
+  <img src="docs/screenshots/calendar.png" width="320" alt="Year calendar with logged and predicted period dates">
+</p>
 
-The current UI implements the complete Figma flow: role selection, OTP, owner home, pairing, moments, reflections, monthly/weekly/yearly calendars, and cycle statistics. Calendar and insight views are computed locally from the cycle rows already protected by Supabase RLS.
+This rendered calendar preview uses sample data. Screenshots containing user names are excluded from the public documentation.
 
-If the Supabase project was created with an older version of `schema.sql`, run `supabase/20260916_profiles_cycle_logging.sql` once. It adds private profile names, configurable period details (start/end dates, flow, symptoms and notes), and makes invite generation invalidate any older unused invite for the same owner. Without this migration, the app shows a setup screen instead of silently failing to load.
+## Run locally
 
-For existing databases, also run `supabase/20260922_partner_names_and_nicknames.sql` once. It adds shared partner nicknames and the protected function used to change them.
+### Requirements
 
-Run `supabase/20260922_ephemeral_chat.sql` to enable the private status/chat room. Messages are AES-256 encrypted on the server before storage and expire after the sender-selected TTL (10 minutes to 24 hours). This is server-side encryption, not end-to-end encryption; Supabase executes the authorized decryption function.
+- Flutter **3.44 or newer**, with Dart **3.12.2 or newer**, for the bundled navigation package.
+- Android SDK and a supported Java installation for Android builds; Xcode on macOS for iOS.
+- A Supabase project with email OTP authentication and the database migrations below.
+- A Firebase Android app for push notifications, with its matching `google-services.json` in `android/app/`.
 
-The room listens to Supabase Realtime and shows discreet local notifications containing no message preview while the app process is available. Delivery after the app has been fully terminated requires Firebase Cloud Messaging/APNs credentials plus a trusted server or Edge Function; do not describe local Realtime alerts as terminated-app push notifications.
+```sh
+git clone https://github.com/veha2309/mahila-mitr-mobile.git
+cd mahila-mitr-mobile
+flutter pub get
+```
 
-Run `supabase/20260923_conversation_rooms.sql` after the chat migration to enable subject-based conversations. A conversation owns one adjustable expiry shared by all its messages; expiry deletes the conversation and cascades to its messages. The migration schedules minute-level cleanup with `pg_cron` when the project exposes it and otherwise cleans expired conversations on every room API call.
+Set your Supabase project URL and **publishable** key in [`lib/config.dart`](lib/config.dart). This checkout reads those constants directly; `--dart-define` does not override them. Never put a service-role key or Firebase Admin credential in client code.
 
-Run `supabase/20260924_message_ttl_and_status_effects.sql` to move expiry from the conversation to individual messages. Empty conversations persist, the default message TTL lives in conversation settings, long-pressing a message can extend it, and a conversation is removed after its final previously-created message expires. This migration also fixes the ambiguous `reply_to` SQL error from the earlier RPC.
+### Database and sign-in
 
-Run `supabase/20260925_realtime_hardening.sql` to enforce publication membership, linked-user read policies, grants, and full replica identity for chat Realtime. The UI shows a green connection icon only after Supabase confirms the channel subscription and retries after app resume or channel failure.
+Apply [`supabase/schema.sql`](supabase/schema.sql) in the Supabase SQL editor, followed by these migrations in order:
 
-For Android background and terminated-app push, place the matching `google-services.json` in `android/app`, run `supabase/20260926_push_tokens.sql`, deploy the `push-chat-notification` Edge Function, and set its `FIREBASE_SERVICE_ACCOUNT` secret to a Firebase Admin service-account JSON value. Never commit that service-account credential. The app registers and refreshes FCM tokens automatically; notification content is always the generic “You have a notification”.
+1. `20260916_profiles_cycle_logging.sql`
+2. `20260917_day_logs.sql`
+3. `20260922_partner_names_and_nicknames.sql`
+4. `20260922_ephemeral_chat.sql`
+5. `20260923_conversation_rooms.sql`
+6. `20260924_message_ttl_and_status_effects.sql`
+7. `20260925_realtime_hardening.sql`
+8. `20260926_push_tokens.sql`
+9. `20261016_read_triggered_expiry.sql`
 
-Cycle estimates are approximate and should not be used as contraception or medical advice. Pairing gives the partner access to period start history; the pairing screen discloses this before a code is shared. Before a public launch, add account deletion, abuse prevention and rate limits for pairing codes, privacy policy, and a full security review of note access and notifications.
+All migration files are in [`supabase/`](supabase/). For an existing database, apply only migrations it has not received. The read-triggered expiry migration is required for this client.
 
-## Read-triggered chat expiry (16 October 2026)
+Configure SMTP for partner accounts and public users. In **Authentication → Email Templates → Magic Link**, include `{{ .Token }}` so the email contains the code accepted by the app. If a request fails or email does not arrive, check Supabase Auth logs and your SMTP settings.
 
-Apply `supabase/20261016_read_triggered_expiry.sql` **before deploying this client**, after the earlier chat migrations. This supersedes the send-time expiry described above. New messages and statuses have no expiry until the recipient views their bubble in the foreground for at least 750 ms. Loading a conversation, notification fetches, sender access, offscreen cached bubbles, and covered/background screens do not acknowledge reads. Only the linked recipient can acknowledge incoming message IDs. Repeated receipts preserve the original read time and deadline.
+```sh
+flutter run
+```
 
-Each message snapshots the room's default duration at send time. Timer settings affect future messages. Unread messages remain indefinitely; extending them adds to their pending duration without starting the clock. A room persists while any unread or unexpired message remains, and is removed after its last message expires. Empty rooms persist. Cleanup continues to use the existing scheduled function and room API calls.
+### Push notifications
 
-Existing surviving messages are treated as unread because historical read receipts are unavailable. Messages already deleted by the old expiry policy cannot be restored. Older clients do not send read receipts, so messages they view remain unread until viewed using the updated client.
+Deploy [`push-chat-notification`](supabase/functions/push-chat-notification) and configure its `FIREBASE_SERVICE_ACCOUNT` secret on the server. Keep the service-account JSON outside Git and client assets. The app registers FCM tokens and uses generic notification text without message previews.
 
-Validation: `flutter analyze` and `flutter test`. For isolated database regression checks, install `@electric-sql/pglite` into a temporary directory and run `node test/read_expiry_database_test.cjs <path-to-installed-@electric-sql/pglite>`. The test uses an in-memory PostgreSQL database with crypto stubs to verify expiry and authorization; it never connects to the live project. Apply the migration to a staging Supabase project and verify two-account Realtime/push behavior before production rollout.
+Realtime/local notifications work while the app process is available. Background or terminated-app delivery requires Firebase and server configuration. iOS push additionally requires Apple credentials; this release was built and verified for Android.
+
+## Build a release
+
+On Windows, from the repository directory:
+
+```powershell
+./tool/build_release.ps1
+```
+
+The script reads `pubspec.yaml`, synchronizes the version in Settings, and produces:
+
+```text
+build/releases/mahila-mitr/1.0.0+1/
+  mahila-mitr.apk
+  release-info.json
+  SHA256SUMS.txt
+```
+
+Back up `android/key.properties` and `android/app/mahila-mitr-release.keystore` securely. Updates must use the same signing key; both files are ignored by Git. See [release instructions](RELEASING.md) for versioning and publishing.
+
+## Development
+
+```sh
+flutter analyze
+flutter test test packages/platform_glass_navigation/test
+```
+
+Tests cover responsive screens, enlarged text, note layouts, loading states, calendar selection, navigation, and input restoration. On Windows, pass `--dart-define=CAPTURE_UI=true` to relevant widget tests to generate previews in `build/ui-previews/`.
+
+| Location | Purpose |
+| --- | --- |
+| `lib/main.dart` | Startup, account flows, and screen integration |
+| `lib/app_design.dart` | Theme, surfaces, typography, and inputs |
+| `lib/notes_widgets.dart`, `lib/note_stationery.dart` | Moments, composer, and illustrated stationery |
+| `lib/private_room_page.dart`, `lib/chat_widgets.dart` | Private conversations and chat presentation |
+| `lib/app_activity.dart`, `lib/brand_widgets.dart` | Loading states and floral branding |
+| `lib/app_navigation.dart`, `lib/navigation_card_stack.dart` | Persistent tabs and transitions |
+| `packages/platform_glass_navigation/` | Bundled platform navigation implementation |
+| `supabase/` | Schema, migrations, and notification function |
+
+For isolated PostgreSQL regression checks, install `@electric-sql/pglite` into a temporary directory and run `node test/read_expiry_database_test.cjs <path-to-package>`. These tests use an in-memory database and crypto stubs, never a live project.
+
+## Privacy and current limits
+
+Pairing shares period history with the linked partner; the pairing flow discloses that access. Chat is encrypted on the server before storage, **not end-to-end encrypted**. The authorized server function can decrypt it.
+
+Timers begin after the linked recipient views a message bubble in the foreground for at least 750 ms. Unread messages do not expire; changing the default timer affects future messages. Older clients do not acknowledge reads, and the migration cannot restore messages already deleted.
+
+Cycle predictions are estimates and should not be used as contraception or medical advice. Account deletion, pairing abuse prevention, a privacy policy, and a security review remain necessary before a wider public rollout. Nearby Bluetooth pairing is implemented on Android; iOS uses manual invite codes. iOS builds and low-end device performance still need device validation.

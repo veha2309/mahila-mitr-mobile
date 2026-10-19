@@ -1,13 +1,15 @@
 name: mahila_mitr
 description: Cycle tracking and shared partner moments.
 publish_to: none
-version: 0.1.0+1
+version: 1.0.0+1
 environment:
   sdk: '>=3.6.0 <4.0.0'
 dependencies:
   flutter:
     sdk: flutter
   supabase_flutter: ^2.17.2
+  platform_glass_navigation:
+    path: packages/platform_glass_navigation
   shared_preferences: ^2.5.0
   flutter_local_notifications: ^20.0.0
   rive: ^0.14.11

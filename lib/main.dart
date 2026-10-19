@@ -1,3 +1,9 @@
+import 'app_version.dart';
+import 'brand_widgets.dart';
+import 'app_activity.dart';
+import 'year_calendar.dart';
+import 'home_widgets.dart';
+import 'app_navigation.dart';
 import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -10,7 +16,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config.dart';
-import 'chat_widgets.dart';
+import 'private_room_page.dart';
+import 'notes_widgets.dart';
+import 'appearance_settings.dart';
+import 'app_design.dart';
 import 'premium_widgets.dart';
 import 'wellness_guide.dart';
 
@@ -19,13 +28,13 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   // Handled automatically by system notification payload
 }
 
-const plum = Color(0xff6e4d73);
-const ink = Color(0xff2f233a);
-const cream = Color(0xfffff8f6);
+const plum = AppPalette.plum;
+const ink = AppPalette.ink;
+const cream = AppPalette.canvas;
 const rose = Color(0xffe9c7d1);
 const sage = Color(0xffb7c9b3);
 const coral = Color(0xfff28c8c);
-const line = Color(0xffe8dde1);
+const line = AppPalette.border;
 const blush = Color(0xfffff0f3);
 const softLilac = Color(0xfff3eef8);
 
@@ -45,86 +54,34 @@ Future<void> main() async {
 
 final _navigatorKey = GlobalKey<NavigatorState>();
 
-class MahilaMitr extends StatelessWidget {
+class MahilaMitr extends StatefulWidget {
   const MahilaMitr({super.key});
 
+  @override
+  State<MahilaMitr> createState() => _MahilaMitrState();
+}
+
+class _MahilaMitrState extends State<MahilaMitr> {
+  final appearance = AppearanceController();
+  final activity = AppActivityController();
+  @override
+  void initState() { super.initState(); appearance.load(); appearance.startMonitoring(); }
+  @override
+  void dispose() { activity.dispose(); appearance.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext context) => MaterialApp(
         navigatorKey: _navigatorKey,
         title: 'Mahila Mitr',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: plum,
-            surface: cream,
-            primary: plum,
-            secondary: coral,
-            error: const Color(0xffa43d55),
-          ),
-          scaffoldBackgroundColor: cream,
-          useMaterial3: true,
-          textTheme: const TextTheme(
-            headlineLarge: TextStyle(
-                color: ink,
-                fontSize: 32,
-                height: 1.05,
-                fontWeight: FontWeight.w800),
-            headlineSmall: TextStyle(
-                color: ink, fontSize: 22, fontWeight: FontWeight.w800),
-            titleMedium: TextStyle(
-                color: ink, fontSize: 16, fontWeight: FontWeight.w700),
-            bodyMedium: TextStyle(color: ink, height: 1.35),
-          ),
-          navigationBarTheme: const NavigationBarThemeData(
-            height: 72,
-            indicatorColor: Color(0xffeadde8),
-            backgroundColor: Colors.white,
-            elevation: 0,
-          ),
-          inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: line),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: line),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: plum, width: 1.6),
-            ),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-          ),
-          chipTheme: ChipThemeData(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(99)),
-            side: const BorderSide(color: line),
-            selectedColor: rose.withValues(alpha: .55),
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
-          ),
-          filledButtonTheme: FilledButtonThemeData(
-            style: FilledButton.styleFrom(
-              backgroundColor: plum,
-              foregroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(48),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-          outlinedButtonTheme: OutlinedButtonThemeData(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: plum,
-              minimumSize: const Size.fromHeight(48),
-              side: const BorderSide(color: line),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-        ),
+        theme: buildAppTheme(),
+        builder: (context, child) => AppActivityScope(controller: activity,
+          child: AppearanceScope(controller: appearance,
+            child: AnimatedBuilder(animation: appearance, builder: (context, _) {
+              final media = MediaQuery.of(context);
+              return MediaQuery(data: media.copyWith(disableAnimations: media.disableAnimations ||
+                appearance.effective == VisualEffects.reduced || appearance.effective == VisualEffects.off),
+                child: AppActivityOverlay(controller: activity, child: child!));
+            }))),
         home: const HomePage(),
       );
 }
@@ -252,6 +209,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String noteStyle = 'letter';
   int stars = 5;
   int tab = 0;
+  int _navigatorAction = 0;
+  final _navigationPreview = ValueNotifier<double?>(null);
   int calendarMode = 0;
   DateTime selectedDay = DateUtils.dateOnly(DateTime.now());
 
@@ -415,6 +374,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _navigationPreview.dispose();
     WidgetsBinding.instance.removeObserver(this);
     authSubscription?.cancel();
     _stopLinkRealtime();
@@ -444,11 +404,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Future<void> action(Future<void> Function() work) async {
+  Future<void> action(Future<void> Function() work, {String label = 'Saving changes…'}) async {
     if (busy) return;
     setState(() => busy = true);
     try {
-      await work();
+      await runWithAppActivity(context, label, work);
     } catch (error, stackTrace) {
       debugPrint('Mahila Mitr action failed: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -803,7 +763,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           'new_nickname': newNickname.trim(),
         });
         await refresh();
-      });
+      }, label: 'Saving nickname…');
 
   void showEditNicknameDialog() {
     final controller = TextEditingController(text: partnerNickname ?? '');
@@ -901,11 +861,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           codeSent = true;
           pendingEmail = _normalizedEmail;
         });
-      });
+      }, label: 'Sending verification code…');
   Future<void> verifyCode() => action(() async {
         await client!.auth.verifyOTP(
             email: pendingEmail, token: otp.text.trim(), type: OtpType.email);
-      });
+      }, label: 'Verifying code…');
   Future<void> saveProfile() => action(() async {
         final value = displayNameInput.text.trim();
         if (value.length < 2 || value.length > 50) {
@@ -918,7 +878,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         });
         if (mounted) setState(() => displayName = value);
-      });
+      }, label: 'Saving profile…');
 
   // ── Period flow: STEP 1 – Start a new period ────────────────────────────
   Future<void> showStartPeriodConfirm() async {
@@ -1672,7 +1632,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> createInvite() => action(() async {
         final value = await client!.rpc('create_invite');
         setState(() => invite = value.toString());
-      });
+      }, label: 'Creating invite…');
   Future<void> shareNearby() => action(() async {
         if (defaultTargetPlatform != TargetPlatform.android) {
           throw const FormatException(
@@ -1695,7 +1655,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           nearby.invokeMethod<void>('stopAdvertising');
           if (mounted) setState(() => nearbyAdvertising = false);
         });
-      });
+      }, label: 'Starting nearby sharing…');
   Future<void> scanNearby() => action(() async {
         if (defaultTargetPlatform != TargetPlatform.android) {
           throw const FormatException(
@@ -1736,7 +1696,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             });
           }
         });
-      });
+      }, label: 'Starting scan…');
   Future<void> stopNearby() async {
     nearbyTimer?.cancel();
     nearbySecondsTimer?.cancel();
@@ -1772,7 +1732,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
         await refresh();
-      });
+      }, label: 'Connecting partner…');
   Future<void> unlink() => action(() async {
         await client!.rpc('unlink_partner');
         setState(() {
@@ -1781,7 +1741,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ratings = [];
         });
         await refresh();
-      });
+      }, label: 'Disconnecting partner…');
   Future<void> confirmUnlink() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1820,7 +1780,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Your note was sent.')));
         }
-      });
+      }, label: 'Sending note…');
   Future<void> rateDate() => action(() async {
         if (link == null) return;
         final today = DateUtils.dateOnly(DateTime.now())
@@ -1836,20 +1796,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         });
         reflection.clear();
         await refresh();
-      });
+      }, label: 'Saving reflection…');
   Future<void> openNote(Map<String, dynamic> note) async {
     final style = note['style'] as String? ?? 'letter';
     final design = noteDesign[style] ?? noteDesign['letter']!;
     if (mounted) {
-      await showDialog<void>(
-          context: context,
-          builder: (context) => AnimatedEnvelopeDialog(
-                icon: design.icon,
-                title: design.title,
-                message: note['body'] as String,
-                color: design.color,
-                reduceMotion: MediaQuery.disableAnimationsOf(context),
-              ));
+      await showMomentReader(context, design: design,
+        message: note['body'] as String, fromName: effectivePartnerName,
+        createdAt: note['created_at'] as String?);
     }
     if (note['opened_at'] == null) {
       await action(() async {
@@ -1861,32 +1815,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget card(String title, List<Widget> children,
           {Color color = Colors.white}) =>
-      Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: line),
-          boxShadow: color == Colors.white
-              ? const [
-                  BoxShadow(
-                    color: Color(0x0d6e4d73),
-                    blurRadius: 18,
-                    offset: Offset(0, 8),
-                  )
-                ]
-              : null,
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          ...children,
-        ]),
-      );
+      AppSurface(title: title, color: color, children: children);
 
   Widget button(String label, VoidCallback onPressed,
           {bool secondary = false}) =>
@@ -1904,41 +1833,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget input(TextEditingController controller, String label,
           {TextInputType? keyboard, int lines = 1, int? maxLength}) =>
-      TextField(
-        controller: controller,
-        keyboardType: keyboard,
-        maxLines: lines,
-        maxLength: maxLength,
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: line)),
-        ),
-      );
+      AppTextInput(controller: controller, label: label, keyboard: keyboard,
+          lines: lines, maxLength: maxLength);
 
-  Widget heading(String eyebrow, String title, [String? subtitle]) => Padding(
-        padding: const EdgeInsets.only(bottom: 20),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(eyebrow.toUpperCase(),
-              style: const TextStyle(
-                  color: plum,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: .5)),
-          const SizedBox(height: 5),
-          Text(title,
-              style: const TextStyle(
-                  fontSize: 28, height: 1.05, fontWeight: FontWeight.w800)),
-          if (subtitle != null)
-            Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(subtitle,
-                    style: TextStyle(color: ink.withValues(alpha: .62)))),
-        ]),
-      );
+  Widget heading(String eyebrow, String title, [String? subtitle]) =>
+      AppPageHeading(eyebrow: eyebrow, title: title, subtitle: subtitle);
 
   @override
   Widget build(BuildContext context) {
@@ -1946,7 +1845,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (session == null) return signInScreen();
     if (!profileChecked) {
       return const Scaffold(
-          body: Center(child: CircularProgressIndicator(color: plum)));
+          body: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            FloralProgressIndicator(), SizedBox(height: 12),
+            Text('Loading your account…', style: TextStyle(color: AppPalette.muted)),
+          ])));
     }
     if (syncError != null) return configurationErrorScreen();
     if (displayName == null) return profileSetupScreen();
@@ -1954,61 +1856,55 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ? [homeScreen(), insightsScreen(), momentsScreen(), moreScreen()]
         : [pairingScreen(), insightsScreen(), momentsScreen(), moreScreen()];
     return Scaffold(
+      extendBody: true,
       body: SafeArea(
-        child: AnimatedTabStack(
-          index: tab,
-          reduceMotion: MediaQuery.disableAnimationsOf(context),
-          children: pages,
-        ),
+        bottom: false,
+        child: ValueListenableBuilder<double?>(valueListenable: _navigationPreview,
+          builder: (context, preview, _) => AnimatedTabStack(
+            index: tab, previewPosition: preview, navigationAction: _navigatorAction,
+            reduceMotion: AppearanceScope.effectsOf(context) != VisualEffects.full,
+            children: pages,
+          )),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (value) => setState(() => tab = value),
-        destinations: const [
-          NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home),
-              label: 'Home'),
-          NavigationDestination(
-              icon: Icon(Icons.pie_chart_outline),
-              selectedIcon: Icon(Icons.pie_chart),
-              label: 'Insights'),
-          NavigationDestination(
-              icon: Icon(Icons.favorite_border),
-              selectedIcon: Icon(Icons.favorite),
-              label: 'Moments'),
-          NavigationDestination(icon: Icon(Icons.menu), label: 'More'),
-        ],
-      ),
+      bottomNavigationBar: AppNavigation(index: tab,
+        onScrubChanged: (position) {
+          if (!mounted) return;
+          if (_navigationPreview.value == null && position != null) FocusManager.instance.primaryFocus?.unfocus();
+          _navigationPreview.value = position;
+        },
+        onSelected: (value) {
+          FocusManager.instance.primaryFocus?.unfocus();
+          if (value != tab) {
+            setState(() { _navigatorAction++; tab = value; });
+          }
+        }),
     );
   }
 
-  Widget page(List<Widget> children) => ListView(
-      padding: const EdgeInsets.fromLTRB(22, 22, 22, 32), children: children);
+  Widget page(List<Widget> children) => AppPage(children: children);
 
   Widget roleScreen() => Scaffold(
         body: SafeArea(
           child: page([
-            const SizedBox(height: 44),
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                    Text('Mahila Mitr',
-                        style: TextStyle(
-                            fontSize: 34, fontWeight: FontWeight.w800)),
-                    SizedBox(height: 6),
-                    Text('Care that feels private, gentle, and shared.'),
-                  ])),
-              Container(
-                  width: 84,
-                  height: 84,
-                  decoration:
-                      const BoxDecoration(color: rose, shape: BoxShape.circle),
-                  child: const Icon(Icons.favorite, color: plum, size: 38)),
-            ]),
-            const SizedBox(height: 36),
+            const SizedBox(height: 24),
+            Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                        color: AppPalette.lilac,
+                        borderRadius: BorderRadius.circular(24)),
+                    child:
+                        const Icon(Icons.spa_outlined, color: plum, size: 36))),
+            const SizedBox(height: 28),
+            const AppPageHeading(
+                eyebrow: 'Welcome to Mahila Mitr',
+                title: 'Track your cycle.',
+                subtitle:
+                    'Log periods and symptoms, view your history, and choose what to share with a partner.'),
+            const Text('How would you like to begin?',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 16),
             roleChoice(
                 Icons.circle_outlined,
                 'I track my cycle',
@@ -2069,8 +1965,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         body: SafeArea(
           child: page([
             const SizedBox(height: 26),
-            heading('Welcome back', 'A private space,\njust for you.',
-                'One-time email verification keeps things simple.'),
+            heading('Mahila Mitr', 'Sign in',
+                'We’ll email you a verification code.'),
             const PrivacyBanner(
               title: 'Password-free and discreet',
               body:
@@ -2139,7 +2035,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             card('Run this migration', [
               const SelectableText(
                   'supabase/20260916_profiles_cycle_logging.sql'),
-              button('Retry', refresh),
+              button('Retry', () => action(refresh, label: 'Loading your account…')),
             ]),
           ]),
         ),
@@ -2155,7 +2051,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ? null
         : today.difference(DateUtils.dateOnly(latestStart)).inDays + 1;
     final phase = cycleDay == null
-        ? 'Your cycle story'
+        ? 'No periods logged'
         : cycleDay <= averagePeriodLength
             ? 'Menstrual phase'
             : cycleDay <= 13
@@ -2175,51 +2071,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       7,
       (index) => today.subtract(Duration(days: 6 - index)),
     );
-    final todayLog = dayLogFor(today);
-    final energy = todayLog?['energy'] as String?;
-    final insight = energy == 'low'
-        ? const WellnessInsight(
-            icon: Icons.bedtime_outlined,
-            title: 'Make space for recovery',
-            body:
-                'Your energy is low today. A slower pace, hydration, and rest may feel supportive.',
-          )
-        : phase == 'Luteal phase'
-            ? const WellnessInsight(
-                icon: Icons.self_improvement_rounded,
-                title: 'A gentler rhythm may help',
-                body:
-                    'Energy can shift in this phase. Notice what your body asks for and adjust without pressure.',
-              )
-            : const WellnessInsight(
-                icon: Icons.spa_outlined,
-                title: 'Consistency builds clarity',
-                body:
-                    'A ten-second daily check-in makes future patterns and estimates more useful.',
-              );
     return page([
-      Row(children: [
-        Expanded(
-          child: heading(
-            'Your private space',
-            'Good morning,\n${displayName ?? 'friend'}',
-            'A gentle look at today—only visible to you.',
-          ),
-        ),
-        Semantics(
-          label: 'Private profile',
-          button: true,
-          child: CircleAvatar(
-              radius: 23,
-              backgroundColor: rose,
-              child: Text(
-                  (displayName ?? session?.user.email ?? 'A')[0].toUpperCase(),
-                  style: const TextStyle(
-                      color: plum, fontWeight: FontWeight.w800))),
-        ),
-      ]),
+      HomeHeading(date: today, name: displayName ?? 'Profile',
+          onProfile: () => setState(() => tab = 3)),
       CycleTodayHero(
         cycleDay: cycleDay,
+        cycleLength: averageCycleLength,
+        onViewCalendar: () => setState(() => tab = 1),
         phase: phase,
         nextPeriodLabel: next == null ? 'your next period' : formatDate(next),
         daysToGo: daysToGo,
@@ -2234,18 +2092,52 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           reduceMotion: reduceMotion,
         ),
       ),
+      const SizedBox(height: 16),
+      AppActionPair(
+        first: AppActionTile(
+            icon: _activePeriod == null
+                ? Icons.water_drop_outlined
+                : Icons.check_circle_outline_rounded,
+            title:
+                _activePeriod == null ? 'Log your period' : 'End this period',
+            subtitle: _activePeriod == null
+                ? 'Add a start date'
+                : 'Add an end date',
+            onTap: _activePeriod == null
+                ? showStartPeriodConfirm
+                : () => showEndPeriodSheet(_activePeriod!)),
+        second: AppActionTile(
+            icon: link == null
+                ? Icons.favorite_border_rounded
+                : Icons.chat_bubble_outline_rounded,
+            title: link == null ? 'Add a partner' : 'Messages',
+            subtitle: link == null
+                ? 'Create or enter an invite code'
+                : 'Open your conversation',
+            color: AppPalette.sage,
+            onTap:
+                link == null ? () => setState(() => tab = 3) : openPrivateRoom),
+      ),
       const SizedBox(height: 26),
       WellnessHistoryStrip(
         days: week,
         hasLog: hasDayLog,
         onSelected: showDayLogger,
       ),
-      const SizedBox(height: 22),
-      insight,
       const SizedBox(height: 24),
+      if (checkedIn) todayWellnessCard(),
+      if (cycles.length >= 2) ...[
+        AppSurface(title: 'Cycle averages', children: [
+          Row(children: [
+            metric('$averageCycleLength', 'Cycle days'),
+            metric('$averagePeriodLength', 'Period days'),
+            metric('${cycles.length}', 'Periods logged'),
+          ]),
+        ]),
+      ],
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         const Text('Your recent cycles',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+            style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
         TextButton(
             onPressed: () => setState(() => tab = 1),
             child: const Text('See insights'))
@@ -2258,79 +2150,38 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           onEdit: () => showPeriodLogger(existing: _activePeriod),
         )
       else if (cycles.isEmpty)
-        card('Start with one date', [
+        card('No period history', [
           const Text(
-              'Log your latest period to unlock phase guidance and predictions.'),
+              'Add your last period to start tracking.'),
           button('Start a period', showStartPeriodConfirm),
         ]),
       // ── Recent cycles ──
       if (cycles.isNotEmpty)
         for (var i = 0; i < cycles.take(3).length; i++) periodRow(cycles[i], i),
-      // ── Bottom CTA changes depending on state ──
-      if (_activePeriod == null)
-        button('Start a new period', showStartPeriodConfirm)
-      else
-        button('End current period',
-            () => showEndPeriodSheet(_activePeriod!), secondary: false),
-      const SizedBox(height: 4),
-      TextButton(
+      TextButton.icon(
         onPressed: showPeriodLogger,
-        child: Text('Or log / edit manually',
-            style: TextStyle(
-                fontSize: 13, color: ink.withValues(alpha: .5))),
+        icon: const Icon(Icons.edit_calendar_outlined, size: 18),
+        label: const Text('View or edit period entries'),
       ),
-      if (link != null) ...[
-        const SizedBox(height: 8),
-        _privateChatButton(),
-      ],
     ]);
   }
 
-  Widget _privateChatButton() => InkWell(
-        onTap: openPrivateRoom,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xff6e4d73), Color(0xff9b5e8a)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: const [
-              BoxShadow(
-                  color: Color(0x296e4d73),
-                  blurRadius: 16,
-                  offset: Offset(0, 6))
-            ],
-          ),
-          child: Row(children: [
-            const CircleAvatar(
-              radius: 20,
-              backgroundColor: Colors.white24,
-              child: Text('💬', style: TextStyle(fontSize: 18)),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Private Room',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800)),
-                    Text('Send a status or message securely',
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: .75),
-                            fontSize: 11)),
-                  ]),
-            ),
-            const Icon(Icons.chevron_right, color: Colors.white70),
-          ]),
-        ),
-      );
+  Widget _privateChatButton() => Material(
+    color: AppPalette.surface, clipBehavior: Clip.antiAlias,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: AppPalette.border)),
+    child: InkWell(onTap: openPrivateRoom,
+      child: Padding(padding: const EdgeInsets.all(16), child: Row(children: [
+        const CircleAvatar(backgroundColor: AppPalette.sage,
+          child: Icon(Icons.chat_bubble_outline_rounded, color: AppPalette.forest, size: 20)),
+        const SizedBox(width: 14),
+        const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Your private room', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppPalette.ink)),
+          SizedBox(height: 4),
+          Text('A conversation for the two of you', style: TextStyle(fontSize: 12, color: AppPalette.muted)),
+        ])),
+        const SizedBox(width: 8),
+        const Icon(Icons.arrow_forward_rounded, size: 18, color: AppPalette.muted),
+      ]))));
 
   Widget todayWellnessCard() {
     final today = DateUtils.dateOnly(DateTime.now());
@@ -2345,123 +2196,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         (log?['symptoms'] as List?)?.whereType<String>().toList() ?? [];
     final note = log?['note'] as String?;
 
-    return card('Today’s wellness', [
-      if (log == null) ...[
-        const Text('How are you feeling today?',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 4),
-        Text(
-          'Track your mood, period flow, and body sensations for today.',
-          style: TextStyle(fontSize: 13, color: ink.withValues(alpha: .62)),
-        ),
-        const SizedBox(height: 8),
-        button('Log today’s mood & flow', () => showDayLogger(today)),
-      ] else ...[
-        Row(children: [
-          Text(formatDate(today),
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: ink.withValues(alpha: .55))),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: sage.withValues(alpha: .3),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text('Logged today',
-                style: TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w700, color: plum)),
-          ),
-        ]),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: [
-            if (moodInfo != null)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: moodInfo.color,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text('${moodInfo.emoji} ${moodInfo.label}',
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700, color: ink)),
-              ),
-            if (flowInfo != null && flowKey != 'none')
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: rose.withValues(alpha: .6),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text('${flowInfo.icon} ${flowInfo.label}',
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700, color: ink)),
-              ),
-            if (energyInfo != null)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: sage.withValues(alpha: .4),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text('${energyInfo.icon} ${energyInfo.label}',
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700, color: ink)),
-              ),
-          ],
-        ),
-        if (symptoms.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: symptoms
-                .map((s) => Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: cream,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: line),
-                      ),
-                      child: Text(s,
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: ink.withValues(alpha: .8),
-                              fontWeight: FontWeight.w600)),
-                    ))
-                .toList(),
-          ),
-        ],
-        if (note != null && note.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: cream,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: line),
-            ),
-            child: Text('“$note”',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                    color: ink.withValues(alpha: .75))),
-          ),
-        ],
-        button('Update today’s entry', () => showDayLogger(today),
-            secondary: true),
-      ],
-    ]);
+    return DailyCheckInCard(
+      mood: moodInfo?.label,
+      flow: flowInfo?.label,
+      energy: energyInfo?.label,
+      symptoms: symptoms,
+      note: note,
+      onEdit: () => showDayLogger(today),
+    );
   }
 
   List<Widget> dayLogSection(DateTime date) {
@@ -2618,98 +2360,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ? null
         : DateTime.parse(cycle['end_date'] as String);
     final isActive = end == null && index == 0;
-    final length = end != null
-        ? end.difference(start).inDays + 1
-        : index + 1 < cycles.length
-            ? start
-                .difference(
-                    DateTime.parse(cycles[index + 1]['start_date'] as String))
-                .inDays
-            : averageCycleLength;
-
-    return InkWell(
+    return PeriodHistoryTile(start: start, end: end, isActive: isActive,
       onTap: role == 'owner'
-          ? () => isActive
-              ? showEndPeriodSheet(cycle)
-              : showPeriodLogger(existing: cycle)
-          : null,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 9),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        decoration: BoxDecoration(
-          color: isActive
-              ? const Color(0xfffff0f3)
-              : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: isActive ? coral.withValues(alpha: .45) : line,
-              width: isActive ? 1.5 : 1),
-        ),
-        child: Row(children: [
-          Icon(Icons.circle,
-              color: isActive ? coral : coral.withValues(alpha: .4),
-              size: 10),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isActive
-                      ? 'Started ${_fmtDate(start)}'
-                      : _fmtDate(start),
-                  style: TextStyle(
-                      fontWeight: isActive
-                          ? FontWeight.w700
-                          : FontWeight.normal),
-                ),
-                if (isActive)
-                  Text(
-                    'Day ${DateUtils.dateOnly(DateTime.now()).difference(start).inDays + 1} · tap to end',
-                    style: TextStyle(
-                        fontSize: 11, color: coral.withValues(alpha: .85)),
-                  ),
-              ],
-            ),
-          ),
-          if (isActive)
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: coral.withValues(alpha: .13),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(
-                  width: 7, height: 7,
-                  decoration: BoxDecoration(
-                    color: coral,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                          color: coral.withValues(alpha: .5),
-                          blurRadius: 4,
-                          spreadRadius: 1)
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 5),
-                Text('In progress',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: coral)),
-              ]),
-            )
-          else
-            Text('$length days ›',
-                style: TextStyle(
-                    fontSize: 12, color: ink.withValues(alpha: .55))),
-        ]),
-      ),
-    );
+          ? () => isActive ? showEndPeriodSheet(cycle) : showPeriodLogger(existing: cycle)
+          : null);
   }
 
   Widget shortcut(
@@ -2746,48 +2400,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               icon: const Icon(Icons.chevron_left)),
           Expanded(
               child: heading(
-                  'Your history',
-                  calendarMode == 3 ? 'Cycle insights' : 'Cycle calendar',
-                  'Patterns based on your logged history'))
+                  '',
+                  calendarMode == 3 ? 'Statistics' : 'Calendar'))
         ]),
-        Container(
-          padding: const EdgeInsets.all(20),
-          margin: const EdgeInsets.only(bottom: 18),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xfff6edf4), Color(0xfffffaf7)],
-            ),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: line),
-          ),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Row(children: [
-              Icon(Icons.auto_awesome_rounded, color: plum, size: 19),
-              SizedBox(width: 8),
-              Text('Your cycle story',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-            ]),
-            const SizedBox(height: 7),
-            Text(
-              cycles.length < 2
-                  ? 'Keep logging to reveal your personal rhythm. Two or more cycles will begin to show useful patterns.'
-                  : 'Across ${cycles.length} cycles, your average is $averageCycleLength days with ${regularity.round()}% regularity.',
-              style: TextStyle(color: ink.withValues(alpha: .67), height: 1.4),
-            ),
-            const SizedBox(height: 16),
-            Row(children: [
-              metric('$averageCycleLength', 'day average'),
-              metric('${averagePeriodLength}d', 'period length'),
-              metric('${dayLogs.length}', 'check-ins'),
-            ]),
-            WellnessGuide(
-              screen: 1,
-              isCheckedIn: hasDayLog(DateUtils.dateOnly(DateTime.now())),
-              reduceMotion: MediaQuery.disableAnimationsOf(context),
-            ),
-          ]),
-        ),
         SegmentedButton<int>(
             segments: const [
               ButtonSegment(value: 0, label: Text('Month')),
@@ -2998,50 +2613,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     ]);
   }
 
-  Widget yearlyCalendar() => Column(children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          IconButton(
-              onPressed: () => setState(
-                  () => selectedDay = DateTime(selectedDay.year - 1, 1, 1)),
-              icon: const Icon(Icons.chevron_left)),
-          Text('${selectedDay.year}',
-              style:
-                  const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-          IconButton(
-              onPressed: () => setState(
-                  () => selectedDay = DateTime(selectedDay.year + 1, 1, 1)),
-              icon: const Icon(Icons.chevron_right))
-        ]),
-        GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 3,
-            childAspectRatio: 1.15,
-            children: [
-              for (var month = 1; month <= 12; month++)
-                Container(
-                    margin: const EdgeInsets.all(5),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                            color: selectedDay.month == month ? plum : line)),
-                    child: Column(children: [
-                      Text(monthName(month).substring(0, 3).toUpperCase(),
-                          style: const TextStyle(
-                              fontSize: 11, fontWeight: FontWeight.w700)),
-                      const Spacer(),
-                      Wrap(spacing: 5, runSpacing: 5, children: [
-                        for (var i = 0; i < 8; i++)
-                          CircleAvatar(
-                              radius: 4, backgroundColor: i < 4 ? coral : sage)
-                      ])
-                    ]))
-            ]),
-        card('${cycles.length} logged cycles',
-            [Text('Average $averageCycleLength days')]),
-      ]);
+  Widget yearlyCalendar() => YearCalendar(
+    selectedDay: selectedDay,
+    isPeriodDay: isPeriodDay,
+    isPredictedDay: isPredictedDay,
+    onYearChanged: (year) => setState(() => selectedDay = DateTime(year, selectedDay.month)),
+    onMonthSelected: (month) => setState(() {
+      selectedDay = month;
+      calendarMode = 0;
+    }),
+  );
 
   // ─── computed helpers for stats ────────────────────────────────────────────
 
@@ -3673,85 +3254,57 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ]);
 
   Widget momentsScreen() => page([
-        heading(
-            'A closer you',
-            role == 'owner'
-                ? 'Little Moments'
-                : 'For ${ownerName ?? 'your partner'}',
-            role == 'owner'
-                ? 'Thoughtful notes. Small surprises.'
-                : 'Create something kind for your partner.'),
-        WellnessGuide(
-          screen: 2,
-          isCheckedIn: hasDayLog(DateUtils.dateOnly(DateTime.now())),
-          reduceMotion: MediaQuery.disableAnimationsOf(context),
-        ),
-        if (role == 'partner' && link != null) ...[
-          Wrap(
-              spacing: 8,
-              children: noteDesign.entries
-                  .map((entry) => ChoiceChip(
-                      label: Text('${entry.value.icon} ${entry.value.title}'),
-                      selected: noteStyle == entry.key,
-                      onSelected: (_) => setState(() => noteStyle = entry.key)))
-                  .toList()),
-          const SizedBox(height: 16),
-          input(noteDraft, 'Write something kind', lines: 5, maxLength: 500),
-          button('Create a moment', sendNote),
-        ] else if (role == 'owner') ...[
-          if (notes.isEmpty)
-            const ExpressiveEmptyState(
-              icon: Icons.mark_email_unread_outlined,
-              title: 'A quiet place for little moments',
-              body:
-                  'When your partner sends something thoughtful, it will appear here without revealing the message in a notification.',
-            ),
-          if (notes.isEmpty) const SizedBox(height: 16),
-          for (final note in notes)
-            Semantics(
-              label: note['opened_at'] == null
-                  ? 'Unread private moment from your partner'
-                  : 'Opened private moment from your partner',
-              child: ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  tileColor: note['opened_at'] == null ? blush : Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: const BorderSide(color: line)),
-                  leading: CircleAvatar(
-                      backgroundColor:
-                          (noteDesign[note['style']] ?? noteDesign['letter']!)
-                              .color,
-                      child: Text(noteDesign[note['style']]?.icon ?? '✉')),
-                  title: Text(note['opened_at'] == null
-                      ? 'A new little surprise'
-                      : 'A little note for you'),
-                  subtitle: const Text('From your partner'),
-                  trailing: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (note['opened_at'] == null)
-                        const CircleAvatar(radius: 4, backgroundColor: plum),
-                      const SizedBox(height: 5),
-                      Text((note['created_at'] as String).substring(0, 10),
-                          style: const TextStyle(fontSize: 10)),
-                    ],
-                  ),
-                  onTap: () => openNote(note)),
-            ),
-          const SizedBox(height: 14),
-          button('Enable discreet notifications', requestNotificationPermission,
-              secondary: true),
-        ] else
-          card('Pair first', [
-            const Text('Connect securely before sharing moments.'),
-            button('Go to pairing', () => setState(() => tab = 3))
-          ]),
-        if (link != null) reflectionsCard(),
-      ]);
+    AppPageHeading(eyebrow: '', title: 'Moments',
+      subtitle: role == 'partner' && link != null ? 'For $effectivePartnerName' : null,
+      trailing: role == 'owner' ? IconButton(tooltip: 'Enable note notifications',
+          onPressed: requestNotificationPermission,
+          icon: const Icon(Icons.notifications_none_rounded)) : null),
+    if (link == null)
+      card('Connect a partner', [
+        const Text('Pair with a partner to share notes and reflections.'),
+        button('Go to pairing', () => setState(() => tab = 3)),
+      ])
+    else ...[
+      MomentsConnectionCard(name: effectivePartnerName, onOpen: openPrivateRoom),
+      const SizedBox(height: 22),
+      if (role == 'partner')
+        MomentComposer(controller: noteDraft, style: noteStyle,
+          onStyleChanged: (value) => setState(() => noteStyle = value),
+          onSend: sendNote, busy: busy, senderName: displayName ?? 'Your partner')
+      else ...[
+        Row(children: [
+          const Expanded(child: Text('Notes', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
+          Text('${notes.where((note) => note['opened_at'] == null).length} unread',
+              style: const TextStyle(fontSize: 12, color: AppPalette.muted)),
+        ]),
+        const SizedBox(height: 14),
+        if (notes.isEmpty) const ExpressiveEmptyState(
+          icon: Icons.mail_outline,
+          title: 'No notes yet',
+          body: 'Notes from your partner will appear here.'),
+        for (final note in notes)
+          MomentCard(note: note, fromName: effectivePartnerName, onOpen: () => openNote(note)),
+        const SizedBox(height: 8),
+      ],
+      const SizedBox(height: 8),
+      reflectionsCard(),
+    ],
+  ]);
 
-  Widget reflectionsCard() => card('How was your day?', [
+  Widget reflectionsCard() => Material(
+    color: AppPalette.surface,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: AppPalette.border)),
+    clipBehavior: Clip.antiAlias,
+    child: ExpansionTile(
+      key: const PageStorageKey('moments-reflections'),
+      leading: const Icon(Icons.star_border_rounded, color: plum),
+      title: const Text('Shared reflections', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+      subtitle: const Text('Rate a day or add a note', style: TextStyle(fontSize: 12, color: AppPalette.muted)),
+      tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      shape: const Border(), collapsedShape: const Border(),
+      children: [
         Row(children: [
           for (var n = 1; n <= 5; n++)
             Expanded(
@@ -3777,7 +3330,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   rating['author_id'] == session!.user.id ? 'You' : 'Partner'),
               subtitle: Text(rating['reflection'] as String? ??
                   'Shared ${rating['stars']} stars')),
-      ]);
+      ]));
 
   Widget pairingScreen() => page([
         heading(
@@ -3785,7 +3338,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             link == null
                 ? 'Connect with your\npartner'
                 : 'Connected with $effectivePartnerName',
-            'One private connection. Always your choice.'),
+            'Connect one partner. You can disconnect at any time.'),
         if (link == null)
           PrivacyBanner(
             title: role == 'owner'
@@ -4100,20 +3653,56 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ]);
 
   Widget moreScreen() => page([
-        heading(
-            'Your space', 'More', 'Pairing, privacy, and account controls.'),
-        if (tab == 3) pairingScreenContent(),
-        card('Account', [
-          Text(displayName ?? '',
-              style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          Text(session?.user.email ?? ''),
-          button('Edit profile name', () {
-            displayNameInput.text = displayName ?? '';
-            setState(() => displayName = null);
-          }, secondary: true),
-          button('Sign out', signOut, secondary: true)
+        heading('', 'Settings'),
+        pairingScreenContent(),
+        const AppearanceSettingsPanel(),
+        AppSurface(title: 'Your account', children: [
+          ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: CircleAvatar(
+                  backgroundColor: AppPalette.lilac,
+                  child: Text(
+                      (displayName ?? 'M').characters.first.toUpperCase(),
+                      style: const TextStyle(
+                          color: plum, fontWeight: FontWeight.w800))),
+              title: Text(displayName ?? '',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text(session?.user.email ?? '',
+                  style: const TextStyle(fontSize: 12))),
+          const Divider(),
+          ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.person_outline_rounded, color: plum),
+              title: const Text('Edit profile name'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () {
+                displayNameInput.text = displayName ?? '';
+                setState(() => displayName = null);
+              }),
+          ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading:
+                  const Icon(Icons.notifications_none_rounded, color: plum),
+              title: const Text('Discreet notifications'),
+              subtitle: const Text('Keep message previews private'),
+              onTap: requestNotificationPermission),
+          ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.logout_rounded, color: plum),
+              title: const Text('Sign out'),
+              onTap: busy ? null : signOut),
         ]),
+        const AppSurface(title: 'About', children: [
+          ListTile(contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.info_outline_rounded),
+            title: Text(AppVersion.name), subtitle: Text(AppVersion.display)),
+        ]),
+        const PrivacyBanner(
+            title: 'Partner access',
+            body:
+                'Choose who you connect with. You can disconnect your partner at any time.',
+            icon: Icons.shield_outlined,
+            tone: AppPalette.sage),
       ]);
 
   Widget pairingScreenContent() => Column(children: [
@@ -4134,7 +3723,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ])
       ]);
 
-  Future<void> requestNotificationPermission() async {
+  Future<void> requestNotificationPermission() => action(
+      _requestNotificationPermission, label: 'Enabling notifications…');
+
+  Future<void> _requestNotificationPermission() async {
     final androidPlugin = notifications
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
@@ -4168,7 +3760,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           profileChecked = false;
           syncError = null;
         });
-      });
+      }, label: 'Signing out…');
 
   int get averageCycleLength {
     final lengths = cycleLengths;
@@ -4303,19 +3895,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 }
 
-class NoteDesign {
-  const NoteDesign(this.title, this.icon, this.color);
-  final String title;
-  final String icon;
-  final Color color;
-}
-
-const noteDesign = <String, NoteDesign>{
-  'letter': NoteDesign('A little letter', '✉', Color(0xfffff1ec)),
-  'bloom': NoteDesign('A flower for you', '✿', Color(0xfff8edf5)),
-  'star': NoteDesign('A bright thought', '✦', Color(0xfff3f0ff)),
-};
-
 class _FlowItem {
   const _FlowItem(this.label, this.count, this.color);
   final String label;
@@ -4326,1315 +3905,6 @@ class _FlowItem {
 // ═══════════════════════════════════════════════════════════════════════════
 // Private Room Page
 // ═══════════════════════════════════════════════════════════════════════════
-
-class PrivateRoomPage extends StatefulWidget {
-  const PrivateRoomPage({
-    required this.client,
-    required this.linkId,
-    required this.myUserId,
-    required this.myName,
-    required this.partnerName,
-    required this.initialConversations,
-    required this.partnerNickname,
-    required this.myNickname,
-    required this.partnerDisplayName,
-    required this.onNicknameChanged,
-    this.onStatusSent,
-    super.key,
-  });
-
-  final SupabaseClient client;
-  final String linkId;
-  final String myUserId;
-  final String myName;
-  final String partnerName;
-  final String myNickname;
-  final String partnerNickname;
-  final String partnerDisplayName;
-  final void Function(String)? onNicknameChanged;
-  final List<Map<String, dynamic>> initialConversations;
-  final void Function(String status)? onStatusSent;
-
-  @override
-  State<PrivateRoomPage> createState() => _PrivateRoomPageState();
-}
-
-class _PrivateRoomPageState extends State<PrivateRoomPage>
-    with TickerProviderStateMixin, WidgetsBindingObserver {
-  // ── state ──
-  List<Map<String, dynamic>> _conversations = [];
-  Map<String, dynamic>? _activeConvo;
-  List<Map<String, dynamic>> _messages = [];
-  bool _loading = false;
-  bool _sending = false;
-  String? _error;
-  RealtimeChannel? _channel;
-  String? _currentPartnerNickname;
-  Map<String, dynamic>? _replyingTo;
-  final _msgController = TextEditingController();
-  final _msgFocusNode = FocusNode();
-  final _subjectController = TextEditingController(text: 'Private chat');
-  final _scrollController = ScrollController();
-  final _messageViewportKey = GlobalKey();
-  Timer? _refreshTimer;
-  bool _refreshing = false;
-  int _refreshTicks = 0;
-
-  static const _statuses = [
-    '🌙 Resting',
-    '💗 Missing you',
-    '🌷 Feeling good',
-    '🫶 Need some care',
-    '☕ Talk to me',
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted ||
-          WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed ||
-          ModalRoute.of(context)?.isCurrent != true) {
-        return;
-      }
-      setState(() {});
-      if (++_refreshTicks % 15 == 0) _refreshRoom();
-    });
-    _currentPartnerNickname =
-        widget.partnerNickname.isNotEmpty ? widget.partnerNickname : null;
-    _conversations = List.from(widget.initialConversations);
-    if (_conversations.isNotEmpty) {
-      _openConversation(_conversations.first);
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _refreshTimer?.cancel();
-    _stopRealtime();
-    _msgController.dispose();
-    _msgFocusNode.dispose();
-    _subjectController.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refreshRoom();
-  }
-
-  Future<void> _refreshRoom() async {
-    if (_refreshing || !mounted) return;
-    _refreshing = true;
-    try {
-      final rows = await widget.client.rpc('get_ephemeral_conversations');
-      if (!mounted) return;
-      final conversations = List<Map<String, dynamic>>.from(rows as List);
-      final activeId = _activeConvo?['id'];
-      setState(() {
-        _conversations = conversations;
-        final matches = conversations.where((c) => c['id'] == activeId);
-        _activeConvo = matches.isEmpty ? null : matches.first;
-      });
-      if (_activeConvo != null) {
-        await _reloadMessages(_activeConvo!['id'] as String);
-      } else if (conversations.isNotEmpty) {
-        await _openConversation(conversations.first);
-      } else {
-        _stopRealtime();
-        setState(() {
-          _messages = [];
-          _replyingTo = null;
-        });
-      }
-    } catch (e) {
-      debugPrint('Room refresh failed: $e');
-    } finally {
-      _refreshing = false;
-    }
-  }
-
-  Future<void> _acknowledgeMessage(Map<String, dynamic> message) async {
-    final conversationId = _activeConvo?['id'] as String?;
-    if (conversationId == null) return;
-    await widget.client.rpc('mark_ephemeral_messages_read', params: {
-      'target_conversation_id': conversationId,
-      'message_ids': [message['id']],
-    });
-    if (mounted && _activeConvo?['id'] == conversationId) {
-      await _reloadMessages(conversationId);
-    }
-  }
-
-  // ── name helpers ──
-
-  String get _displayPartnerName {
-    if (_currentPartnerNickname != null &&
-        _currentPartnerNickname!.trim().isNotEmpty) {
-      return _currentPartnerNickname!.trim();
-    }
-    if (widget.partnerDisplayName.trim().isNotEmpty) {
-      return widget.partnerDisplayName.trim();
-    }
-    return widget.partnerName;
-  }
-
-  String get _partnerSubtitle {
-    if (_currentPartnerNickname != null &&
-        widget.partnerDisplayName.trim().isNotEmpty) {
-      return '${widget.partnerDisplayName} · tap to edit nickname';
-    }
-    return 'Private Room · tap to set nickname';
-  }
-
-  void _startReply(Map<String, dynamic> msg) {
-    setState(() => _replyingTo = msg);
-    _msgFocusNode.requestFocus();
-  }
-
-  void _cancelReply() {
-    setState(() => _replyingTo = null);
-  }
-
-  void _showEditNicknameDialog() {
-    final controller =
-        TextEditingController(text: _currentPartnerNickname ?? '');
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: cream,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Partner nickname',
-            style: TextStyle(
-                fontWeight: FontWeight.w800, fontSize: 18, color: plum)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.partnerDisplayName.isNotEmpty
-                  ? 'Choose a sweet nickname for ${widget.partnerDisplayName}'
-                  : 'Choose a sweet nickname for your partner',
-              style: TextStyle(fontSize: 13, color: ink.withValues(alpha: .7)),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              maxLength: 30,
-              decoration: InputDecoration(
-                hintText: 'e.g. My Angel, Love, Sunshine…',
-                hintStyle: TextStyle(color: ink.withValues(alpha: .4)),
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(color: line),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: const BorderSide(color: plum, width: 2),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: ink)),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: plum),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final newNick = controller.text.trim();
-              try {
-                await widget.client.rpc('set_partner_nickname', params: {
-                  'new_nickname': newNick,
-                });
-                setState(() =>
-                    _currentPartnerNickname = newNick.isEmpty ? null : newNick);
-                widget.onNicknameChanged?.call(newNick);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(newNick.isEmpty
-                          ? 'Nickname removed'
-                          : 'Nickname updated to "$newNick" 💖'),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to update nickname: $e')),
-                  );
-                }
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── realtime ──
-
-  void _startRealtime(String conversationId) {
-    _stopRealtime();
-    _channel = widget.client
-        .channel('chat-$conversationId')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'ephemeral_messages',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'conversation_id',
-            value: conversationId,
-          ),
-          callback: (_) => _reloadMessages(conversationId),
-        )
-        .subscribe();
-  }
-
-  void _stopRealtime() {
-    final ch = _channel;
-    if (ch != null) {
-      widget.client.removeChannel(ch);
-      _channel = null;
-    }
-  }
-
-  // ── data ──
-
-  Future<void> _openConversation(Map<String, dynamic> convo) async {
-    if (!mounted) return;
-    setState(() {
-      _activeConvo = convo;
-      _messages = [];
-      _loading = true;
-      _error = null;
-      _replyingTo = null;
-    });
-    _startRealtime(convo['id'] as String);
-    await _reloadMessages(convo['id'] as String);
-  }
-
-  Future<void> _reloadMessages(String conversationId) async {
-    final scrollToEnd = _loading ||
-        (_scrollController.hasClients &&
-            _scrollController.position.extentAfter < 80);
-    try {
-      final rows = await widget.client.rpc('get_ephemeral_messages',
-          params: {'target_conversation_id': conversationId});
-      final msgs = List<Map<String, dynamic>>.from(
-          (rows as List).map((e) => Map<String, dynamic>.from(e as Map)));
-      if (mounted && _activeConvo?['id'] == conversationId) {
-        setState(() {
-          _error = null;
-          _messages = msgs;
-          _loading = false;
-        });
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted &&
-              _activeConvo?['id'] == conversationId &&
-              scrollToEnd &&
-              _scrollController.hasClients) {
-            _scrollController.animateTo(
-              _scrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-            );
-          }
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = e.toString();
-        });
-      }
-    }
-  }
-
-  Future<void> _createConversation() async {
-    final subject = _subjectController.text.trim();
-    if (subject.isEmpty) return;
-    setState(() => _sending = true);
-    try {
-      final id = await widget.client.rpc('create_ephemeral_conversation',
-          params: {'conversation_subject': subject, 'ttl_minutes': 60});
-      final convo = {
-        'id': id.toString(),
-        'subject': subject,
-        'message_count': 0,
-        'ttl_minutes': 60,
-      };
-      if (mounted) {
-        setState(() {
-          _conversations = [convo, ..._conversations];
-          _sending = false;
-        });
-        await _openConversation(convo);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _sending = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
-    }
-  }
-
-  void _triggerPushNotification() {
-    if (_activeConvo == null) return;
-    try {
-      widget.client.functions.invoke('push-chat-notification', body: {
-        'conversation_id': _activeConvo!['id'],
-      }).catchError((e) {
-        debugPrint('FCM push error: $e');
-        return const FunctionResponse(data: null, status: 500);
-      });
-    } catch (e) {
-      debugPrint('FCM push error: $e');
-    }
-  }
-
-  Future<void> _sendMessage({String kind = 'message'}) async {
-    final body = _msgController.text.trim();
-    if (_sending || body.isEmpty || _activeConvo == null) return;
-    final replyId = _replyingTo?['id'] as String?;
-    setState(() => _sending = true);
-    try {
-      final params = <String, dynamic>{
-        'target_conversation_id': _activeConvo!['id'],
-        'message_body': body,
-        'message_kind': kind,
-      };
-      if (replyId != null) {
-        params['reply_message_id'] = replyId;
-      }
-      await widget.client.rpc('send_ephemeral_message', params: params);
-      _triggerPushNotification();
-      _msgController.clear();
-      if (mounted) setState(() => _replyingTo = null);
-      if (kind == 'status') widget.onStatusSent?.call(body);
-      await _reloadMessages(_activeConvo!['id'] as String);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
-  }
-
-  Future<void> _sendStatus(String status) async {
-    if (_sending) return;
-    if (_activeConvo == null) {
-      // Create a default convo if none exists
-      setState(() => _sending = true);
-      try {
-        final id = await widget.client.rpc('create_ephemeral_conversation',
-            params: {
-              'conversation_subject': 'Status updates',
-              'ttl_minutes': 120
-            });
-        final convo = {
-          'id': id.toString(),
-          'subject': 'Status updates',
-          'message_count': 0,
-          'ttl_minutes': 120,
-        };
-        setState(() {
-          _conversations = [convo, ..._conversations];
-          _activeConvo = convo;
-          _sending = false;
-        });
-        _startRealtime(convo['id'] as String);
-      } catch (e) {
-        if (mounted) {
-          setState(() => _sending = false);
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(e.toString())));
-          return;
-        }
-      }
-    }
-    if (_activeConvo == null) return;
-    final replyId = _replyingTo?['id'] as String?;
-    setState(() => _sending = true);
-    try {
-      final params = <String, dynamic>{
-        'target_conversation_id': _activeConvo!['id'],
-        'message_body': status,
-        'message_kind': 'status',
-      };
-      if (replyId != null) {
-        params['reply_message_id'] = replyId;
-      }
-      await widget.client.rpc('send_ephemeral_message', params: params);
-      _triggerPushNotification();
-      if (mounted) setState(() => _replyingTo = null);
-      widget.onStatusSent?.call(status);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Status "$status" sent 💌'),
-          behavior: SnackBarBehavior.floating,
-        ));
-        await _reloadMessages(_activeConvo!['id'] as String);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
-  }
-
-  // ── UI ──
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xfffce8f0),
-      appBar: AppBar(
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xfffde3ef), Color(0xffefd6f0)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: _showEditNicknameDialog,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const CircleAvatar(
-                radius: 17,
-                backgroundColor: Color(0xffeadde8),
-                child: Text('💬', style: TextStyle(fontSize: 15)),
-              ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            _displayPartnerName,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w800, fontSize: 16),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Icon(Icons.favorite,
-                            size: 13, color: coral.withValues(alpha: .75)),
-                      ],
-                    ),
-                    Text(
-                      _partnerSubtitle,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 11, color: ink.withValues(alpha: .55)),
-                    ),
-                  ],
-                ),
-              ),
-            ]),
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.favorite_border, color: plum),
-            tooltip: 'Edit nickname',
-            onPressed: _showEditNicknameDialog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.add_comment_outlined, color: plum),
-            tooltip: 'New conversation',
-            onPressed: _showNewConvoSheet,
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // ── girly wallpaper ──
-          Positioned.fill(
-            child: CustomPaint(painter: _ChatBackgroundPainter()),
-          ),
-          // ── chat content ──
-          Column(children: [
-            // Status bar
-            _buildStatusBar(),
-            // Conversation tabs (if multiple)
-            if (_conversations.length > 1) _buildConvoTabs(),
-            if (_activeConvo != null) _buildLifetimeBanner(),
-            // Messages
-            Expanded(child: _buildMessageList()),
-            // Input
-            if (_activeConvo != null) _buildInputBar(),
-          ]),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLifetimeBanner() {
-    final minutes = _activeConvo?['ttl_minutes'] as int? ?? 60;
-    final duration = minutes < 60 ? '$minutes min' : '${minutes ~/ 60} hr';
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .88),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: line),
-      ),
-      child: Row(children: [
-        const Icon(Icons.hourglass_bottom_rounded, size: 21, color: plum),
-        const SizedBox(width: 10),
-        Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(_activeConvo?['subject'] as String? ?? 'Private conversation',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-          const SizedBox(height: 3),
-          Text('Disappears $duration after reading. Unread messages stay.',
-              style:
-                  TextStyle(fontSize: 11, color: ink.withValues(alpha: .65))),
-        ])),
-        IconButton(
-            tooltip: 'Message timer',
-            onPressed: _showTimerSettings,
-            icon: const Icon(Icons.tune_rounded, color: plum, size: 20)),
-      ]),
-    );
-  }
-
-  Future<void> _showTimerSettings() async {
-    final conversationId = _activeConvo?['id'] as String?;
-    if (conversationId == null) return;
-    final minutes = await showModalBottomSheet<int>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: cream,
-      builder: (ctx) => SafeArea(
-          child: Padding(
-        padding: const EdgeInsets.fromLTRB(22, 0, 22, 20),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Time together, on your terms',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 8),
-              const Text(
-                  'Choose how long new messages stay after the recipient reads them. Existing messages keep their timer. The room disappears after its last message expires.'),
-              const SizedBox(height: 16),
-              for (final choice in <int, String>{
-                10: '10 minutes',
-                60: '1 hour',
-                120: '2 hours',
-                1440: '24 hours'
-              }.entries)
-                ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.timer_outlined, color: plum),
-                    title: Text(choice.value),
-                    trailing: _activeConvo?['ttl_minutes'] == choice.key
-                        ? const Icon(Icons.check_circle, color: plum)
-                        : null,
-                    onTap: () => Navigator.pop(ctx, choice.key)),
-            ]),
-      )),
-    );
-    if (minutes == null || !mounted) return;
-    try {
-      await widget.client.rpc('update_conversation_expiry', params: {
-        'target_conversation_id': conversationId,
-        'new_ttl_minutes': minutes,
-      });
-      await _refreshRoom();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not update timer: $e')));
-      }
-    }
-  }
-
-  Widget _buildStatusBar() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: .82),
-          border: Border(bottom: BorderSide(color: line)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Send a status',
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: ink.withValues(alpha: .55),
-                  letterSpacing: .3)),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: _statuses
-                  .map((s) => Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _StatusChip(
-                          label: s,
-                          onTap: _sending ? null : () => _sendStatus(s),
-                        ),
-                      ))
-                  .toList(),
-            ),
-          ),
-        ]),
-      );
-
-  Widget _buildConvoTabs() => Container(
-        height: 44,
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: .78),
-          border: Border(bottom: BorderSide(color: line)),
-        ),
-        child: ListView.builder(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          itemCount: _conversations.length,
-          itemBuilder: (_, i) {
-            final c = _conversations[i];
-            final active = _activeConvo?['id'] == c['id'];
-            return GestureDetector(
-              onTap: () => _openConversation(c),
-              child: Container(
-                margin: const EdgeInsets.only(right: 8),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                decoration: BoxDecoration(
-                  color: active ? plum : const Color(0xfff3eef8),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  c['subject'] as String? ?? 'Chat',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: active ? Colors.white : plum),
-                ),
-              ),
-            );
-          },
-        ),
-      );
-
-  Widget _buildMessageList() {
-    if (_conversations.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('💬', style: TextStyle(fontSize: 52)),
-            const SizedBox(height: 16),
-            const Text('Start a private conversation',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Text(
-              'Tap + to create a room, then send messages or statuses.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: ink.withValues(alpha: .6)),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _showNewConvoSheet,
-              icon: const Icon(Icons.add),
-              label: const Text('Create a room'),
-            ),
-          ]),
-        ),
-      );
-    }
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator(color: plum));
-    }
-    if (_error != null) {
-      return Center(child: Text(_error!, style: const TextStyle(color: coral)));
-    }
-    if (_messages.isEmpty) {
-      return const Center(
-        child: Text('No messages yet.\nSend the first one! 💌',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xff9e8fa8))),
-      );
-    }
-    final liveMessages = _messages.where((m) {
-      final expiry = DateTime.tryParse(m['expires_at'] as String? ?? '');
-      return expiry == null || expiry.isAfter(DateTime.now());
-    }).toList();
-    return ListView.builder(
-      key: _messageViewportKey,
-      controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      itemCount: liveMessages.length,
-      itemBuilder: (_, i) {
-        final message = liveMessages[i];
-        return Column(
-            key: ValueKey(message['id']),
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (i == 0 ||
-                  (message['created_at'] as String).substring(0, 10) !=
-                      (liveMessages[i - 1]['created_at'] as String)
-                          .substring(0, 10))
-                Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                        MaterialLocalizations.of(context).formatMediumDate(
-                            DateTime.parse(message['created_at'] as String)
-                                .toLocal()),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: 11, color: ink.withValues(alpha: .55)))),
-              ReadAwareMessage(
-                viewportKey: _messageViewportKey,
-                unread: message['sender_id'] != widget.myUserId &&
-                    message['read_at'] == null,
-                onRead: () => _acknowledgeMessage(message),
-                child: _buildMessage(message),
-              ),
-              Padding(
-                  padding: const EdgeInsets.only(left: 6, right: 6, bottom: 12),
-                  child: Text(
-                      messageLifetimeLabel(message, DateTime.now(),
-                          outgoing: message['sender_id'] == widget.myUserId),
-                      textAlign: message['sender_id'] == widget.myUserId
-                          ? TextAlign.right
-                          : TextAlign.left,
-                      style: TextStyle(
-                          fontSize: 11, color: ink.withValues(alpha: .6)))),
-            ]);
-      },
-    );
-  }
-
-  void _showMessageOptions(Map<String, dynamic> msg) {
-    final body = msg['body'] as String? ?? '';
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: cream,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.reply_rounded, color: plum),
-                title: const Text('Reply to message',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _startReply(msg);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.copy_rounded, color: plum),
-                title: const Text('Copy message',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Clipboard.setData(ClipboardData(text: body));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Message copied to clipboard'),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessage(Map<String, dynamic> msg) {
-    final isMe = msg['sender_id'] == widget.myUserId;
-    final kind = msg['kind'] as String? ?? 'message';
-    final body = msg['body'] as String? ?? '';
-    final replyBody = msg['reply_body'] as String?;
-    final time = msg['created_at'] as String?;
-    final timeStr = time != null
-        ? '${DateTime.parse(time).toLocal().hour.toString().padLeft(2, '0')}:${DateTime.parse(time).toLocal().minute.toString().padLeft(2, '0')}'
-        : '';
-
-    if (kind == 'status') {
-      return _SwipeToReply(
-        key: ValueKey('status_msg_${msg['id']}'),
-        isMe: isMe,
-        onReply: () => _startReply(msg),
-        child: _StatusMessageBubble(
-          status: body,
-          isMe: isMe,
-          time: timeStr,
-          onReply: () => _startReply(msg),
-        ),
-      );
-    }
-
-    return _SwipeToReply(
-      key: ValueKey('msg_${msg['id']}'),
-      isMe: isMe,
-      onReply: () => _startReply(msg),
-      child: InkWell(
-        onLongPress: () => _showMessageOptions(msg),
-        borderRadius: BorderRadius.circular(18),
-        child: Align(
-          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            constraints: const BoxConstraints(maxWidth: 280),
-            child: Column(
-              crossAxisAlignment:
-                  isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-                  decoration: BoxDecoration(
-                    color: isMe ? plum : Colors.white,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(18),
-                      topRight: const Radius.circular(18),
-                      bottomLeft: Radius.circular(isMe ? 18 : 4),
-                      bottomRight: Radius.circular(isMe ? 4 : 18),
-                    ),
-                    border: isMe ? null : Border.all(color: line),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.black.withValues(alpha: .05),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2)),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: isMe
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
-                    children: [
-                      if (replyBody != null && replyBody.isNotEmpty) ...[
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: isMe
-                                ? Colors.white.withValues(alpha: .18)
-                                : const Color(0xfff2ebf5),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border(
-                              left: BorderSide(
-                                color: isMe ? Colors.white : plum,
-                                width: 3,
-                              ),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Reply',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: isMe
-                                      ? Colors.white.withValues(alpha: .9)
-                                      : plum,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                replyBody,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontStyle: FontStyle.italic,
-                                  color: isMe
-                                      ? Colors.white.withValues(alpha: .85)
-                                      : ink.withValues(alpha: .75),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      Text(body,
-                          style: TextStyle(
-                              color: isMe ? Colors.white : ink, fontSize: 14)),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(timeStr,
-                        style: TextStyle(
-                            fontSize: 10, color: ink.withValues(alpha: .4))),
-                    const SizedBox(width: 6),
-                    GestureDetector(
-                      onTap: () => _startReply(msg),
-                      child: Icon(Icons.reply_rounded,
-                          size: 14, color: ink.withValues(alpha: .35)),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInputBar() => SafeArea(
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: line)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_replyingTo != null) _buildReplyPreview(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                child: Row(children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _msgController,
-                      focusNode: _msgFocusNode,
-                      maxLines: 4,
-                      minLines: 1,
-                      decoration: InputDecoration(
-                        hintText: 'Write something…',
-                        hintStyle: TextStyle(
-                            color: ink.withValues(alpha: .4), fontSize: 14),
-                        filled: true,
-                        fillColor: const Color(0xfff8f3fa),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _sendMessage(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: _sending
-                        ? const SizedBox(
-                            width: 42,
-                            height: 42,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: plum))
-                        : IconButton.filled(
-                            key: const ValueKey('send'),
-                            onPressed: _sendMessage,
-                            style: IconButton.styleFrom(
-                                backgroundColor: plum,
-                                foregroundColor: Colors.white),
-                            icon: const Icon(Icons.send_rounded, size: 20),
-                          ),
-                  ),
-                ]),
-              ),
-            ],
-          ),
-        ),
-      );
-
-  Widget _buildReplyPreview() => Container(
-        padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
-        color: const Color(0xfff5eef8),
-        child: Row(
-          children: [
-            Container(
-              width: 3.5,
-              height: 34,
-              decoration: BoxDecoration(
-                color: plum,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _replyingTo!['sender_id'] == widget.myUserId
-                        ? 'Replying to yourself'
-                        : 'Replying to $_displayPartnerName',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: plum,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _replyingTo!['body'] as String? ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: ink.withValues(alpha: .75),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.close_rounded, size: 18, color: plum),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              onPressed: _cancelReply,
-            ),
-          ],
-        ),
-      );
-
-  void _showNewConvoSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: cream,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.fromLTRB(
-            22, 18, 22, MediaQuery.viewInsetsOf(ctx).bottom + 22),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(
-              width: 42,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: line, borderRadius: BorderRadius.circular(4))),
-          const SizedBox(height: 18),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: Text('New conversation',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-          ),
-          const SizedBox(height: 4),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-                'Messages disappear 1 hour after your partner reads them.',
-                style:
-                    TextStyle(fontSize: 13, color: ink.withValues(alpha: .55))),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _subjectController,
-            decoration: InputDecoration(
-              labelText: 'Conversation topic',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _createConversation();
-              },
-              child: const Text('Create private room'),
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
-}
-
-// ── Status chip widget ────────────────────────────────────────────────────────
-
-class _StatusChip extends StatefulWidget {
-  const _StatusChip({required this.label, required this.onTap});
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  State<_StatusChip> createState() => _StatusChipState();
-}
-
-class _StatusChipState extends State<_StatusChip>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 140));
-    _scale = Tween(begin: 1.0, end: 0.92)
-        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTapDown: (_) => _ctrl.forward(),
-        onTapUp: (_) {
-          _ctrl.reverse();
-          widget.onTap?.call();
-        },
-        onTapCancel: () => _ctrl.reverse(),
-        child: ScaleTransition(
-          scale: _scale,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xfff3eef8), Color(0xffeadde8)],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xffddd0e5)),
-              boxShadow: const [
-                BoxShadow(
-                    color: Color(0x0f6e4d73),
-                    blurRadius: 6,
-                    offset: Offset(0, 2))
-              ],
-            ),
-            child: Text(widget.label,
-                style: const TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w700, color: plum)),
-          ),
-        ),
-      );
-}
-
-// ── Status message bubble ─────────────────────────────────────────────────────
-
-class _StatusMessageBubble extends StatelessWidget {
-  const _StatusMessageBubble({
-    required this.status,
-    required this.isMe,
-    required this.time,
-    this.onReply,
-  });
-
-  final String status;
-  final bool isMe;
-  final String time;
-  final VoidCallback? onReply;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.center,
-      child: GestureDetector(
-        onLongPress: onReply,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 10),
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: isMe
-                  ? [const Color(0xff6e4d73), const Color(0xff9b5e8a)]
-                  : [const Color(0xfff3eef8), const Color(0xfffdf4ff)],
-            ),
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                  color: const Color(0x196e4d73),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3))
-            ],
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text(status,
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: isMe ? Colors.white : plum)),
-            const SizedBox(width: 8),
-            Text(isMe ? 'You' : 'Partner',
-                style: TextStyle(
-                    fontSize: 10,
-                    color: isMe
-                        ? Colors.white.withValues(alpha: .65)
-                        : plum.withValues(alpha: .6))),
-            if (onReply != null) ...[
-              const SizedBox(width: 6),
-              GestureDetector(
-                onTap: onReply,
-                child: Icon(
-                  Icons.reply_rounded,
-                  size: 14,
-                  color: isMe
-                      ? Colors.white.withValues(alpha: .7)
-                      : plum.withValues(alpha: .6),
-                ),
-              ),
-            ],
-          ]),
-        ),
-      ),
-    );
-  }
-}
 
 class _PulsingIcon extends StatefulWidget {
   const _PulsingIcon({required this.icon, required this.color});
@@ -5676,236 +3946,6 @@ class _PulsingIconState extends State<_PulsingIcon>
       child: Icon(widget.icon, color: widget.color, size: widget.size),
     );
   }
-}
-
-class _SwipeToReply extends StatefulWidget {
-  const _SwipeToReply({
-    super.key,
-    required this.child,
-    required this.isMe,
-    required this.onReply,
-  });
-
-  final Widget child;
-  final bool isMe;
-  final VoidCallback onReply;
-
-  @override
-  State<_SwipeToReply> createState() => _SwipeToReplyState();
-}
-
-class _SwipeToReplyState extends State<_SwipeToReply>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late Animation<double> _animation;
-  double _dragOffset = 0.0;
-  bool _hasTriggeredHaptic = false;
-  static const double _maxDrag = 52.0;
-  static const double _triggerThreshold = 30.0;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onHorizontalDragUpdate(DragUpdateDetails details) {
-    setState(() {
-      final delta = details.primaryDelta ?? 0;
-      if (widget.isMe) {
-        // Own message: swipe LEFT (negative offset)
-        _dragOffset = (_dragOffset + delta * 0.7).clamp(-_maxDrag, 0.0);
-      } else {
-        // Partner message: swipe RIGHT (positive offset)
-        _dragOffset = (_dragOffset + delta * 0.7).clamp(0.0, _maxDrag);
-      }
-
-      if (_dragOffset.abs() >= _triggerThreshold && !_hasTriggeredHaptic) {
-        HapticFeedback.lightImpact();
-        _hasTriggeredHaptic = true;
-      } else if (_dragOffset.abs() < _triggerThreshold) {
-        _hasTriggeredHaptic = false;
-      }
-    });
-  }
-
-  void _onHorizontalDragEnd(DragEndDetails details) {
-    if (_dragOffset.abs() >= _triggerThreshold) {
-      widget.onReply();
-    }
-    _animateBack();
-  }
-
-  void _onHorizontalDragCancel() {
-    _animateBack();
-  }
-
-  void _animateBack() {
-    _hasTriggeredHaptic = false;
-    _animation = Tween<double>(begin: _dragOffset, end: 0.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
-    )..addListener(() {
-        setState(() => _dragOffset = _animation.value);
-      });
-    _controller.forward(from: 0.0);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final progress = (_dragOffset.abs() / _maxDrag).clamp(0.0, 1.0);
-
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onHorizontalDragUpdate: _onHorizontalDragUpdate,
-      onHorizontalDragEnd: _onHorizontalDragEnd,
-      onHorizontalDragCancel: _onHorizontalDragCancel,
-      child: Stack(
-        alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
-        children: [
-          if (progress > 0.05)
-            Positioned(
-              left: widget.isMe ? null : 16,
-              right: widget.isMe ? 16 : null,
-              child: Opacity(
-                opacity: progress,
-                child: Transform.scale(
-                  scale: 0.6 + 0.4 * progress,
-                  child: Container(
-                    width: 30,
-                    height: 30,
-                    decoration: const BoxDecoration(
-                      color: Color(0xffeedff2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.reply_rounded,
-                      color: plum,
-                      size: 17,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          Transform.translate(
-            offset: Offset(_dragOffset, 0),
-            child: widget.child,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Girly chat wallpaper ──────────────────────────────────────────────────────
-class _ChatBackgroundPainter extends CustomPainter {
-  // Precomputed grid: (dx, dy, size, isHeart) tuples
-  static final List<(double, double, double, bool)> _items = _buildGrid();
-
-  static List<(double, double, double, bool)> _buildGrid() {
-    final list = <(double, double, double, bool)>[];
-    // Tight, varied grid so every viewport looks decorated
-    const cols = 7;
-    const rows = 14;
-    for (int r = 0; r < rows; r++) {
-      for (int c = 0; c < cols; c++) {
-        // Slight jitter using prime offsets so it looks organic
-        final dx = (c / cols) + ((r * 13 + c * 7) % 17) * 0.006;
-        final dy = (r / rows) + ((c * 11 + r * 5) % 13) * 0.004;
-        final size = 5.0 + ((r * 3 + c * 7) % 5) * 1.2;
-        final isHeart = (r + c) % 3 != 0; // 2/3 hearts, 1/3 blossoms
-        list.add((dx, dy, size, isHeart));
-      }
-    }
-    return list;
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Gradient background
-    final bgRect = Offset.zero & size;
-    final bgPaint = Paint()
-      ..shader = const LinearGradient(
-        colors: [Color(0xfffde8f2), Color(0xfff4e0f7), Color(0xfffde8f2)],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ).createShader(bgRect);
-    canvas.drawRect(bgRect, bgPaint);
-
-    // Decoration paint
-    final heartPaint = Paint()
-      ..color = const Color(0xffe8b4cc).withValues(alpha: .38)
-      ..style = PaintingStyle.fill;
-    final blossomPaint = Paint()
-      ..color = const Color(0xffd0a8e0).withValues(alpha: .30)
-      ..style = PaintingStyle.fill;
-
-    for (final (dx, dy, sz, isHeart) in _items) {
-      final cx = dx * size.width;
-      final cy = dy * size.height;
-      if (isHeart) {
-        _drawHeart(canvas, cx, cy, sz, heartPaint);
-      } else {
-        _drawBlossom(canvas, cx, cy, sz, blossomPaint);
-      }
-    }
-  }
-
-  void _drawHeart(Canvas canvas, double cx, double cy, double r, Paint p) {
-    // Compact parametric heart path centred at (cx, cy)
-    final path = Path();
-    // scale factor so heart fits within radius r
-    final s = r * 0.55;
-    path.moveTo(cx, cy + s);
-    path.cubicTo(cx - s * 2, cy - s * 0.5, cx - s * 2, cy - s * 2.2,
-        cx, cy - s * 0.8);
-    path.cubicTo(cx + s * 2, cy - s * 2.2, cx + s * 2, cy - s * 0.5,
-        cx, cy + s);
-    path.close();
-    canvas.drawPath(path, p);
-  }
-
-  void _drawBlossom(Canvas canvas, double cx, double cy, double r, Paint p) {
-    // 5 petals drawn as small ovals rotated around the centre
-    const petals = 5;
-    for (int i = 0; i < petals; i++) {
-      final angle = (i / petals) * 3.141592653589793 * 2;
-      final petalCx = cx + r * 0.6 * _cos(angle);
-      final petalCy = cy + r * 0.6 * _sin(angle);
-      canvas.drawOval(
-        Rect.fromCenter(
-            center: Offset(petalCx, petalCy), width: r * 0.85, height: r * 0.5),
-        p,
-      );
-    }
-    // Tiny centre dot
-    canvas.drawCircle(Offset(cx, cy), r * 0.22, p);
-  }
-
-  // Inline trig helpers to avoid dart:math import here (math already used above)
-  static double _cos(double a) => _sinTable(a + 1.5707963267948966);
-  static double _sin(double a) {
-    // Taylor series sin(a) – good enough for small petal count
-    final b = a % (2 * 3.141592653589793);
-    double s = b, t = b;
-    for (int k = 1; k <= 6; k++) {
-      t *= -b * b / ((2 * k) * (2 * k + 1));
-      s += t;
-    }
-    return s;
-  }
-  static double _sinTable(double a) => _sin(a);
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _StartChip extends StatelessWidget {

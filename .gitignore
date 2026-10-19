@@ -4,6 +4,7 @@
 .pub-cache/
 .pub/
 /build/
+android/.kotlin/
 
 # Credentials and private keys
 *-firebase-adminsdk-*.json

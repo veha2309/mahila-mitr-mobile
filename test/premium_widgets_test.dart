@@ -19,8 +19,8 @@ void main() {
     )));
 
     expect(find.text('Your cycle story'), findsOneWidget);
-    expect(find.text('Log your first period to begin your story.'),
-        findsOneWidget);
+    expect(
+        find.text('Log your first period to see an estimate.'), findsOneWidget);
     expect(find.text('Check in for today'), findsOneWidget);
   });
 
@@ -38,7 +38,8 @@ void main() {
 
     expect(find.text('12'), findsOneWidget);
     expect(find.text('Follicular phase'), findsOneWidget);
-    expect(find.text('High confidence'), findsOneWidget);
+    expect(find.text('Next period · 24 September 2026'), findsOneWidget);
+    expect(find.text('In 6 days'), findsOneWidget);
     expect(find.text('Update today’s check-in'), findsOneWidget);
   });
 

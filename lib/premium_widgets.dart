@@ -1,9 +1,11 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'navigation_card_stack.dart';
+import 'app_design.dart';
 
-const premiumPlum = Color(0xff6e4d73);
-const premiumInk = Color(0xff2f233a);
+const premiumPlum = AppPalette.plum;
+const premiumInk = AppPalette.ink;
 const premiumRose = Color(0xffe9c7d1);
 const premiumSage = Color(0xffb7c9b3);
 const premiumCoral = Color(0xfff28c8c);
@@ -31,7 +33,7 @@ class PrivacyBanner extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: tone,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: premiumPlum.withValues(alpha: .10)),
           ),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -81,20 +83,16 @@ class ExpressiveEmptyState extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xfffffbfc), Color(0xfff8edf3)],
-          ),
+          color: AppPalette.surface,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: const Color(0xffeadde4)),
+          border: Border.all(color: AppPalette.border),
         ),
         child: Column(children: [
           Container(
             width: 64,
             height: 64,
             decoration: const BoxDecoration(
-                color: Colors.white, shape: BoxShape.circle),
+                color: AppPalette.lilac, shape: BoxShape.circle),
             child: Icon(icon, color: premiumPlum, size: 30),
           ),
           const SizedBox(height: 16),
@@ -113,23 +111,25 @@ class ExpressiveEmptyState extends StatelessWidget {
 }
 
 class AnimatedTabStack extends StatelessWidget {
-  const AnimatedTabStack({
-    required this.index,
-    required this.children,
-    required this.reduceMotion,
-    super.key,
-  });
-
+  const AnimatedTabStack(
+      {required this.index,
+      required this.children,
+      required this.reduceMotion,
+      this.previewPosition,
+      this.navigationAction = 0,
+      super.key});
   final int index;
   final List<Widget> children;
   final bool reduceMotion;
-
+  final double? previewPosition;
+  final int navigationAction;
   @override
-  Widget build(BuildContext context) => IndexedStack(
-        index: index,
-        sizing: StackFit.expand,
-        children: children,
-      );
+  Widget build(BuildContext context) => NavigationCardStack(
+      index: index,
+      reduceMotion: reduceMotion,
+      previewPosition: previewPosition,
+      navigationAction: navigationAction,
+      children: children);
 }
 
 class CycleTodayHero extends StatelessWidget {
@@ -143,6 +143,8 @@ class CycleTodayHero extends StatelessWidget {
     required this.reduceMotion,
     required this.onCheckIn,
     this.guide = const SizedBox.shrink(),
+    this.cycleLength = 28,
+    this.onViewCalendar,
     super.key,
   });
 
@@ -155,135 +157,218 @@ class CycleTodayHero extends StatelessWidget {
   final bool reduceMotion;
   final VoidCallback onCheckIn;
   final Widget guide;
+  final int cycleLength;
+  final VoidCallback? onViewCalendar;
 
   @override
-  Widget build(BuildContext context) {
-    final progress = cycleDay == null ? 0.0 : (cycleDay! / 28).clamp(0.0, 1.0);
-    return Container(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xff76547b), Color(0xff5d3e67)],
-        ),
-        borderRadius: BorderRadius.circular(26),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x296e4d73),
-            blurRadius: 28,
-            offset: Offset(0, 14),
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xfff5dde6), Color(0xfff9ece3)],
           ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(children: [
-        const Positioned(
-          right: -54,
-          top: -70,
-          child: _GlowOrb(size: 190, color: Color(0x22ffffff)),
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: const Color(0xffecd3dc)),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x1088445e), blurRadius: 24, offset: Offset(0, 10))
+          ],
         ),
-        Padding(
-          padding: const EdgeInsets.all(20),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-              Semantics(
-                label: cycleDay == null
-                    ? 'No cycle data yet'
-                    : 'Cycle day $cycleDay, $phase phase',
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween(end: progress),
-                  duration: reduceMotion
-                      ? Duration.zero
-                      : const Duration(milliseconds: 900),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, value, child) => CustomPaint(
-                    painter: _CycleRingPainter(progress: value),
-                    child: SizedBox(
-                      width: 112,
-                      height: 112,
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(cycleDay?.toString() ?? '—',
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 34,
-                                    height: 1,
-                                    fontWeight: FontWeight.w800)),
-                            Text(cycleDay == null ? 'cycle day' : 'DAY',
-                                style: const TextStyle(
-                                    color: Color(0xffeadde8),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 1.1)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 18),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.all(20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.water_drop_outlined,
+                size: 18, color: AppPalette.plum),
+            const SizedBox(width: 8),
+            const Expanded(
+                child: Text('Cycle overview',
+                    style: TextStyle(
+                        color: AppPalette.plum,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600))),
+            if (onViewCalendar != null)
+              IconButton(
+                  onPressed: onViewCalendar,
+                  tooltip: 'Open calendar',
+                  icon: const Icon(Icons.calendar_month_outlined, size: 20))
+            else if (isCheckedIn)
+              const Icon(Icons.check_circle, size: 18, color: AppPalette.plum),
+          ]),
+          const SizedBox(height: 22),
+          LayoutBuilder(builder: (context, constraints) {
+            final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.3;
+            final stacked = constraints.maxWidth < 275 || largeText;
+            final wheelSize = largeText ? 210.0 : 152.0;
+            final wheel = Semantics(
+              label: cycleDay == null
+                  ? 'No cycle data'
+                  : 'Cycle day $cycleDay. Estimated cycle length $cycleLength days.',
+              child: ExcludeSemantics(
+                  child: CustomPaint(
+                painter: _CycleDayDial(day: cycleDay, length: cycleLength),
+                child: SizedBox(
+                  width: wheelSize,
+                  height: wheelSize,
+                  child: Center(
+                      child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(phase,
+                      const Text('DAY',
+                          style: TextStyle(
+                              fontSize: 10,
+                              letterSpacing: 2,
+                              color: AppPalette.plum,
+                              fontWeight: FontWeight.w600)),
+                      Text(cycleDay?.toString() ?? '—',
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 4),
-                      Text(
-                        daysToGo == null
-                            ? 'Log your first period to begin your story.'
-                            : '$daysToGo days until $nextPeriodLabel',
-                        style: const TextStyle(
-                            color: Color(0xffeee4ed), height: 1.35),
-                      ),
-                      const SizedBox(height: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 9, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: .13),
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                        child: Text('$confidence confidence',
+                              fontSize: 52,
+                              height: 1.1,
+                              letterSpacing: -2,
+                              color: AppPalette.ink,
+                              fontWeight: FontWeight.w500)),
+                      if (cycleDay != null)
+                        Text('of ~$cycleLength',
                             style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700)),
-                      ),
-                    ]),
-              ),
+                                fontSize: 11, color: AppPalette.muted)),
+                    ],
+                  )),
+                ),
+              )),
+            );
+            final summary = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    daysToGo == null
+                        ? 'Get started'
+                        : daysToGo! < 0
+                            ? 'Update due'
+                            : daysToGo == 0
+                                ? 'Today'
+                                : 'In $daysToGo days',
+                    style: const TextStyle(
+                        fontSize: 26,
+                        height: 1.15,
+                        letterSpacing: -.7,
+                        fontWeight: FontWeight.w500,
+                        color: AppPalette.ink)),
+                const SizedBox(height: 6),
+                Text(
+                    daysToGo == null
+                        ? 'Add your last period'
+                        : 'Next period estimate',
+                    style:
+                        const TextStyle(color: AppPalette.muted, fontSize: 12)),
+                const SizedBox(height: 14),
+                Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: .65),
+                        borderRadius: BorderRadius.circular(9)),
+                    child: Text(phase,
+                        style: const TextStyle(
+                            color: AppPalette.plum,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600))),
+              ],
+            );
+            if (stacked) {
+              return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(child: wheel),
+                    const SizedBox(height: 18),
+                    summary
+                  ]);
+            }
+            return Row(children: [
+              wheel,
+              const SizedBox(width: 20),
+              Expanded(child: summary)
+            ]);
+          }),
+          const SizedBox(height: 22),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .55),
+                borderRadius: BorderRadius.circular(12)),
+            child: Row(children: [
+              const Icon(Icons.event_outlined,
+                  color: AppPalette.plum, size: 19),
+              const SizedBox(width: 9),
+              Expanded(
+                  child: Text(
+                      daysToGo == null
+                          ? 'Log your first period to see an estimate.'
+                          : 'Next period · $nextPeriodLabel',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: AppPalette.ink,
+                          fontWeight: FontWeight.w500))),
             ]),
-            guide,
-            const SizedBox(height: 16),
-            SizedBox(
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: premiumPlum,
-                  minimumSize: const Size.fromHeight(50),
-                ),
                 onPressed: onCheckIn,
-                icon: Icon(isCheckedIn
-                    ? Icons.check_circle_rounded
-                    : Icons.favorite_outline_rounded),
+                icon: Icon(isCheckedIn ? Icons.check_rounded : Icons.add,
+                    size: 19),
                 label: Text(isCheckedIn
                     ? 'Update today’s check-in'
                     : 'Check in for today'),
-              ),
-            ),
-          ]),
-        ),
-      ]),
-    );
+              )),
+        ]),
+      );
+}
+
+class _CycleDayDial extends CustomPainter {
+  const _CycleDayDial({required this.day, required this.length});
+  final int? day;
+  final int length;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = size.shortestSide / 2;
+    canvas.drawCircle(
+        center, radius - 16, Paint()..color = const Color(0x88ffffff));
+    canvas.drawCircle(
+        center,
+        radius - 22,
+        Paint()
+          ..color = const Color(0x35ffffff)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1);
+    // Each mark represents a day, positioned against the estimated cycle length.
+    final marks = length.clamp(1, 120);
+    final current = day == null ? -1 : (day! - 1).clamp(0, marks - 1);
+    for (var i = 0; i < marks; i++) {
+      final angle = -math.pi / 2 + i * 2 * math.pi / marks;
+      final direction = Offset(math.cos(angle), math.sin(angle));
+      final paint = Paint()
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = i == current ? 5 : 3
+        ..color = i == current
+            ? AppPalette.plum
+            : i < current
+                ? const Color(0xffba718f)
+                : const Color(0xffdec4cf);
+      if (i == current) {
+        final marker = center + direction * (radius - 6);
+        canvas.drawCircle(marker, 8, Paint()..color = const Color(0x2288445e));
+      }
+      canvas.drawLine(center + direction * (radius - 11),
+          center + direction * (radius - (i == current ? 1 : 4)), paint);
+    }
   }
+
+  @override
+  bool shouldRepaint(covariant _CycleDayDial old) =>
+      old.day != day || old.length != length;
 }
 
 class WellnessHistoryStrip extends StatelessWidget {
@@ -299,70 +384,74 @@ class WellnessHistoryStrip extends StatelessWidget {
   final ValueChanged<DateTime> onSelected;
 
   @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Your week',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
-          Text('Small check-ins reveal meaningful patterns.',
-              style: TextStyle(
-                  color: premiumInk.withValues(alpha: .58), fontSize: 12)),
-          const SizedBox(height: 14),
-          Row(
+  Widget build(BuildContext context) {
+    final loggedCount = days.where(hasLog).length;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
+      decoration: BoxDecoration(
+          color: AppPalette.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppPalette.border)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Expanded(
+              child: Text('Daily log',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600))),
+          Text('$loggedCount/${days.length} logged',
+              style: const TextStyle(color: AppPalette.muted, fontSize: 11)),
+        ]),
+        const SizedBox(height: 16),
+        Row(
             children: days.map((date) {
-              final logged = hasLog(date);
-              final isToday = DateUtils.isSameDay(date, DateTime.now());
-              final weekday =
-                  const ['M', 'T', 'W', 'T', 'F', 'S', 'S'][date.weekday - 1];
-              return Expanded(
-                child: Semantics(
-                  button: true,
-                  label:
-                      '$weekday ${date.day}${logged ? ', wellness logged' : ', not logged'}',
-                  child: InkWell(
-                    onTap: () => onSelected(date),
-                    borderRadius: BorderRadius.circular(18),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 220),
-                      margin: const EdgeInsets.symmetric(horizontal: 3),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      decoration: BoxDecoration(
-                        color: logged
-                            ? premiumSage.withValues(alpha: .42)
-                            : isToday
-                                ? premiumRose.withValues(alpha: .32)
-                                : Colors.transparent,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                            color: isToday
-                                ? premiumPlum
-                                : const Color(0xffeee5e9)),
-                      ),
-                      child: Column(children: [
-                        Text(weekday,
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: premiumInk.withValues(alpha: .55))),
-                        const SizedBox(height: 6),
-                        Text('${date.day}',
-                            style:
-                                const TextStyle(fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 5),
-                        Icon(
-                          logged ? Icons.check_rounded : Icons.circle_outlined,
-                          size: 14,
-                          color: logged ? premiumPlum : const Color(0xffd8cbd1),
-                        ),
-                      ]),
-                    ),
-                  ),
+          final logged = hasLog(date);
+          final today = DateUtils.isSameDay(date, DateTime.now());
+          final weekday =
+              const ['M', 'T', 'W', 'T', 'F', 'S', 'S'][date.weekday - 1];
+          return Expanded(
+              child: Semantics(
+            button: true,
+            label:
+                '${date.day} ${date.month} ${date.year}, ${logged ? 'logged' : 'not logged'}',
+            child: Material(
+              color: today ? AppPalette.plum : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                onTap: () => onSelected(date),
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  child: Column(children: [
+                    Text(weekday,
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: today ? Colors.white70 : AppPalette.muted)),
+                    const SizedBox(height: 9),
+                    Text('${date.day}',
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: today ? Colors.white : AppPalette.ink)),
+                    const SizedBox(height: 9),
+                    SizedBox(
+                        height: 12,
+                        child: Center(
+                            child:
+                                Icon(logged ? Icons.check_circle : Icons.circle,
+                                    size: logged ? 12 : 5,
+                                    color: today
+                                        ? Colors.white
+                                        : logged
+                                            ? AppPalette.plum
+                                            : AppPalette.border))),
+                  ]),
                 ),
-              );
-            }).toList(),
-          ),
-        ],
-      );
+              ),
+            ),
+          ));
+        }).toList()),
+      ]),
+    );
+  }
 }
 
 class WellnessInsight extends StatelessWidget {
@@ -381,7 +470,8 @@ class WellnessInsight extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: const Color(0xffeef4ec),
+          color: AppPalette.sage,
+          border: Border.all(color: AppPalette.border),
           borderRadius: BorderRadius.circular(22),
         ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -390,13 +480,15 @@ class WellnessInsight extends StatelessWidget {
             height: 42,
             decoration: const BoxDecoration(
                 color: Colors.white, shape: BoxShape.circle),
-            child: Icon(icon, color: premiumPlum, size: 21),
+            child: Icon(icon, color: AppPalette.plum, size: 21),
           ),
           const SizedBox(width: 13),
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+              Text(title,
+                  style: const TextStyle(
+                      color: AppPalette.ink, fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
               Text(body,
                   style: TextStyle(
@@ -407,140 +499,6 @@ class WellnessInsight extends StatelessWidget {
           ),
         ]),
       );
-}
-
-class AnimatedEnvelopeDialog extends StatelessWidget {
-  const AnimatedEnvelopeDialog({
-    required this.icon,
-    required this.title,
-    required this.message,
-    required this.color,
-    required this.reduceMotion,
-    super.key,
-  });
-
-  final String icon;
-  final String title;
-  final String message;
-  final Color color;
-  final bool reduceMotion;
-
-  @override
-  Widget build(BuildContext context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-        child: TweenAnimationBuilder<double>(
-          tween: Tween(begin: reduceMotion ? 1 : 0, end: 1),
-          duration:
-              reduceMotion ? Duration.zero : const Duration(milliseconds: 520),
-          curve: Curves.easeOutBack,
-          builder: (context, value, child) => Transform.translate(
-            offset: Offset(0, (1 - value) * 34),
-            child: Transform.scale(
-              scale: .86 + (.14 * value),
-              child: Opacity(opacity: value.clamp(0, 1), child: child),
-            ),
-          ),
-          child: Stack(clipBehavior: Clip.none, children: [
-            Container(
-              padding: const EdgeInsets.fromLTRB(24, 54, 24, 20),
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(28),
-                boxShadow: const [
-                  BoxShadow(
-                      color: Color(0x29000000),
-                      blurRadius: 30,
-                      offset: Offset(0, 16)),
-                ],
-              ),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Text(title,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        fontSize: 20, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 18),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: .86),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Text(message,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 18, height: 1.45)),
-                ),
-                const SizedBox(height: 12),
-                TextButton.icon(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.favorite_outline_rounded),
-                  label: const Text('Keep this moment'),
-                ),
-              ]),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              top: -34,
-              child: Center(
-                child: Container(
-                  width: 76,
-                  height: 76,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: color, width: 6),
-                  ),
-                  child: Center(
-                      child: Text(icon, style: const TextStyle(fontSize: 38))),
-                ),
-              ),
-            ),
-          ]),
-        ),
-      );
-}
-
-class _GlowOrb extends StatelessWidget {
-  const _GlowOrb({required this.size, required this.color});
-  final double size;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-      );
-}
-
-class _CycleRingPainter extends CustomPainter {
-  const _CycleRingPainter({required this.progress});
-  final double progress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final track = Paint()
-      ..color = Colors.white.withValues(alpha: .18)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 9;
-    final active = Paint()
-      ..shader = const SweepGradient(
-        colors: [Color(0xffffd6d6), Color(0xffb7c9b3), Colors.white],
-      ).createShader(rect)
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = 9;
-    final bounds = rect.deflate(8);
-    canvas.drawArc(bounds, 0, math.pi * 2, false, track);
-    canvas.drawArc(bounds, -math.pi / 2, math.pi * 2 * progress, false, active);
-  }
-
-  @override
-  bool shouldRepaint(covariant _CycleRingPainter oldDelegate) =>
-      oldDelegate.progress != progress;
 }
 
 /// Creative Animated Pop-up Dialog tailored for each couple status
@@ -571,12 +529,24 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1800),
-    )..repeat(reverse: true);
+    );
 
     _particleController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 3200),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _pulseController.stop();
+      _particleController.stop();
+    } else {
+      _pulseController.repeat(reverse: true);
+      _particleController.repeat();
+    }
   }
 
   @override
@@ -589,14 +559,26 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
   @override
   Widget build(BuildContext context) {
     final status = widget.status;
-    final isSleepy = status.contains('Resting') || status.contains('🌙') || status.contains('Sleep');
-    final isMissingYou = status.contains('Missing') || status.contains('💗') || status.contains('Love');
-    final isFeelingGood = status.contains('Feeling good') || status.contains('🌷') || status.contains('Happy');
-    final isNeedCare = status.contains('Need some care') || status.contains('🫶') || status.contains('Care');
-    final isTalkToMe = status.contains('Talk to me') || status.contains('☕') || status.contains('Chat');
+    final isSleepy = status.contains('Resting') ||
+        status.contains('🌙') ||
+        status.contains('Sleep');
+    final isMissingYou = status.contains('Missing') ||
+        status.contains('💗') ||
+        status.contains('Love');
+    final isFeelingGood = status.contains('Feeling good') ||
+        status.contains('🌷') ||
+        status.contains('Happy');
+    final isNeedCare = status.contains('Need some care') ||
+        status.contains('🫶') ||
+        status.contains('Care');
+    final isTalkToMe = status.contains('Talk to me') ||
+        status.contains('☕') ||
+        status.contains('Chat');
 
     final emoji = status.isNotEmpty ? status.characters.first : '✨';
-    final words = status.length > emoji.length ? status.substring(emoji.length).trim() : status;
+    final words = status.length > emoji.length
+        ? status.substring(emoji.length).trim()
+        : status;
 
     // Theme and styling based on status
     final List<Color> bgGradient;
@@ -607,7 +589,11 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
     final Widget animatedScene;
 
     if (isSleepy) {
-      bgGradient = const [Color(0xff120e24), Color(0xff221b3a), Color(0xff141029)];
+      bgGradient = const [
+        Color(0xff120e24),
+        Color(0xff221b3a),
+        Color(0xff141029)
+      ];
       accentColor = const Color(0xffb8a9e5);
       textColor = const Color(0xfff3efff);
       subtitle = '${widget.partnerName} is tucked in & resting softly';
@@ -618,7 +604,11 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
         emoji: emoji,
       );
     } else if (isMissingYou) {
-      bgGradient = const [Color(0xffffeef3), Color(0xffffdbe5), Color(0xfffff5f8)];
+      bgGradient = const [
+        Color(0xffffeef3),
+        Color(0xffffdbe5),
+        Color(0xfffff5f8)
+      ];
       accentColor = const Color(0xffe64980);
       textColor = const Color(0xff2f233a);
       subtitle = '${widget.partnerName} is missing you warmly';
@@ -629,7 +619,11 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
         emoji: emoji,
       );
     } else if (isFeelingGood) {
-      bgGradient = const [Color(0xfff3fced), Color(0xffe2f7d8), Color(0xfffffcf2)];
+      bgGradient = const [
+        Color(0xfff3fced),
+        Color(0xffe2f7d8),
+        Color(0xfffffcf2)
+      ];
       accentColor = const Color(0xff38b000);
       textColor = const Color(0xff223a1a);
       subtitle = '${widget.partnerName} is radiant and full of joy';
@@ -640,7 +634,11 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
         emoji: emoji,
       );
     } else if (isNeedCare) {
-      bgGradient = const [Color(0xfffff4f0), Color(0xffffe6de), Color(0xfffff9f6)];
+      bgGradient = const [
+        Color(0xfffff4f0),
+        Color(0xffffe6de),
+        Color(0xfffff9f6)
+      ];
       accentColor = const Color(0xfff76707);
       textColor = const Color(0xff3a2620);
       subtitle = '${widget.partnerName} could use some gentle care & warmth';
@@ -651,7 +649,11 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
         emoji: emoji,
       );
     } else if (isTalkToMe) {
-      bgGradient = const [Color(0xff2a1f18), Color(0xff3d2d23), Color(0xff1f1712)];
+      bgGradient = const [
+        Color(0xff2a1f18),
+        Color(0xff3d2d23),
+        Color(0xff1f1712)
+      ];
       accentColor = const Color(0xffd4a373);
       textColor = const Color(0xfffbf5ed);
       subtitle = '${widget.partnerName} is free and wants to chat';
@@ -689,7 +691,8 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
             borderRadius: BorderRadius.circular(36),
             boxShadow: [
               BoxShadow(
-                color: accentColor.withValues(alpha: isSleepy || isTalkToMe ? 0.35 : 0.22),
+                color: accentColor.withValues(
+                    alpha: isSleepy || isTalkToMe ? 0.35 : 0.22),
                 blurRadius: 40,
                 spreadRadius: 6,
                 offset: const Offset(0, 10),
@@ -741,10 +744,13 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
                       FilledButton(
                         style: FilledButton.styleFrom(
                           backgroundColor: accentColor,
-                          foregroundColor: isSleepy || isTalkToMe ? Colors.white : Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 13),
+                          foregroundColor: isSleepy || isTalkToMe
+                              ? Colors.white
+                              : Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 13),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           elevation: 2,
                         ),
@@ -777,8 +783,10 @@ class _CreativeStatusDialogState extends State<CreativeStatusDialog>
                     style: IconButton.styleFrom(
                       backgroundColor: textColor.withValues(alpha: 0.08),
                     ),
-                    icon: Icon(Icons.close_rounded, color: textColor.withValues(alpha: 0.7)),
-                    onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                    icon: Icon(Icons.close_rounded,
+                        color: textColor.withValues(alpha: 0.7)),
+                    onPressed: () =>
+                        Navigator.of(context, rootNavigator: true).pop(),
                   ),
                 ),
               ],
@@ -1103,7 +1111,8 @@ class _NeedCareScene extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: const Color(0xffff922b).withValues(alpha: (1.0 - t) * 0.4),
+                  color: const Color(0xffff922b)
+                      .withValues(alpha: (1.0 - t) * 0.4),
                   width: 2.5,
                 ),
               ),
@@ -1198,7 +1207,11 @@ class _TalkToMeScene extends StatelessWidget {
               top: 60 - (t * 45),
               child: Opacity(
                 opacity: (1.0 - t).clamp(0.0, 1.0),
-                child: const Text('~', style: TextStyle(fontSize: 22, color: Color(0xffe8d5c4), fontWeight: FontWeight.bold)),
+                child: const Text('~',
+                    style: TextStyle(
+                        fontSize: 22,
+                        color: Color(0xffe8d5c4),
+                        fontWeight: FontWeight.bold)),
               ),
             ),
             // Rising steam curl 2 (staggered)
@@ -1207,7 +1220,11 @@ class _TalkToMeScene extends StatelessWidget {
               top: 60 - (((t + 0.5) % 1.0) * 45),
               child: Opacity(
                 opacity: (1.0 - ((t + 0.5) % 1.0)).clamp(0.0, 1.0),
-                child: const Text('~', style: TextStyle(fontSize: 24, color: Color(0xffe8d5c4), fontWeight: FontWeight.bold)),
+                child: const Text('~',
+                    style: TextStyle(
+                        fontSize: 24,
+                        color: Color(0xffe8d5c4),
+                        fontWeight: FontWeight.bold)),
               ),
             ),
           ],
@@ -1259,4 +1276,3 @@ class _DefaultStatusScene extends StatelessWidget {
     );
   }
 }
-
