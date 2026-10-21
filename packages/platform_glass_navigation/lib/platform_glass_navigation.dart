@@ -6,10 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/physics.dart';
-import 'package:liquid_glass_easy/liquid_glass_easy.dart';
-
-part 'src/android_glass_bar.dart';
+import 'package:liquid_retina_navigation/liquid_retina_navigation.dart';
 
 /// A native SF Symbol, Flutter icon font, or custom PNG for an iOS tab.
 @immutable
@@ -281,8 +278,16 @@ class _BarState extends State<PlatformGlassNavigationBar> {
       );
     }
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      return _AndroidGlassBar(
-        items: widget.items,
+      return LiquidRetinaNavigationBar(
+        items: widget.items
+            .map(
+              (item) => LiquidRetinaNavigationItem(
+                label: item.label,
+                icon: item.icon,
+                badge: item.badge,
+              ),
+            )
+            .toList(),
         selectedIndex: widget.selectedIndex,
         onTap: _tap,
         tintColor: tint,

@@ -1,5 +1,17 @@
 # platform_glass_navigation
 
+## Android package extraction
+
+Android navigation now delegates to the standalone
+[`liquid_retina_navigation`](https://github.com/veha2309/liquid_retina_navigation)
+package, fetched from Git at `v0.1.0`. The app also declares this Git dependency
+explicitly. The Android renderer no longer lives in this folder. The existing
+`PlatformGlassNavigationBar` API adapts destination data and preview callbacks,
+while the native iOS implementation remains here.
+
+The copy/install instructions below describe the original bundled package;
+the current dependency setup is defined by this folder's `pubspec.yaml`.
+
 A reusable, host-themed Flutter navigation package with no dependencies on the
 museum app's routes, assets, services, or backend.
 
