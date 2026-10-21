@@ -1,6 +1,6 @@
 # Android releases
 
-The app version is defined in `pubspec.yaml`: `1.1.0+2` means version 1.1.0, Android build 2. Increment the build number for every new release; increment the semantic version for the changes being shipped.
+The app version is defined in `pubspec.yaml`: `1.1.0+3` means version 1.1.0, Android build 3. Increment the build number for every new release; increment the semantic version for the changes being shipped. For a replacement build of the same semantic version, keep earlier tags unchanged and add a build-specific tag such as `v1.1.0+3`.
 
 From the mobile app directory on Windows, run:
 
@@ -14,4 +14,4 @@ The first run creates `android/app/mahila-mitr-release.keystore` and `android/ke
 
 Publish the APK, metadata, and checksum as assets on the matching GitHub release tag (for example, `v1.0.0`). Keep signing files private.
 
-For Drive distribution, keep the binary named `mahila-mitr.apk` inside a versioned release folder (for example, `Mahila Mitr releases/1.1.0+2/`) alongside `release-info.json` and `SHA256SUMS.txt`. Verify the APK's embedded version and signing certificate before uploading. The Android build number, rather than the file name, determines upgrade order.
+For Drive distribution, keep the binary named `mahila-mitr.apk` inside a versioned release folder (for example, `Mahila Mitr releases/1.1.0+3/`) alongside `release-info.json` and `SHA256SUMS.txt`. When replacing a release at the user's request, update the existing Drive file in place to preserve its link, update its metadata and checksum files, and rename the folder to match the new build number. Verify the APK's embedded version and signing certificate before uploading. The Android build number, rather than the file name, determines upgrade order.

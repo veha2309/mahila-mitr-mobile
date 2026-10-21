@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 (build 3) — 2026-10-21
+
+- Replaced Partner Home's pairing-management screen with a dedicated dashboard for shared cycle timing, messages, notes, and reflections.
+- Added direct note and reflection sheets, connection settings, and nickname actions.
+- Added an unconnected-partner introduction and layouts for small screens, long names, and enlarged text.
+- Kept cycle dates read-only for partners and handled missing history, ongoing periods, stale estimates, and future entries.
+
+Validation: clean Dart analysis, 99 passing regression tests, rendered UI previews, and a signed Android release build. Version remains 1.1.0; Android version code increases to 3 using the existing release signing key.
+
 ## 1.1.0 (build 2) — 2026-10-21
 
 - Added discreet daily logging reminders for ongoing periods without a daily log, with notification taps opening today's logger.

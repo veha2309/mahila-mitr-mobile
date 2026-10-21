@@ -95,6 +95,8 @@ Back up `android/key.properties` and `android/app/mahila-mitr-release.keystore` 
 
 ## Development
 
+Partner Home now has its own dashboard with a shared-cycle summary, direct message and note actions, and shared reflections. Unconnected partners get a pairing introduction instead. Cycle dates remain read-only for partners; connection management stays in Settings. Notes and reflections reuse the existing composers and sync behavior.
+
 ```sh
 flutter analyze
 flutter test test packages/platform_glass_navigation/test

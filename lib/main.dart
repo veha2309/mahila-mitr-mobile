@@ -9,6 +9,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:uuid/uuid.dart';
 import 'dashboard_store.dart';
 import 'cycle_calendar.dart';
+import 'partner_dashboard.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -2034,7 +2035,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (displayName == null) return profileSetupScreen();
     final pages = role == 'owner'
         ? [homeScreen(), insightsScreen(), momentsScreen(), moreScreen()]
-        : [pairingScreen(), insightsScreen(), momentsScreen(), moreScreen()];
+        : [partnerHomeScreen(), insightsScreen(), momentsScreen(), moreScreen()];
     return Scaffold(
       extendBody: true,
       body: SafeArea(
@@ -3446,6 +3447,64 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         Text(label, style: const TextStyle(fontSize: 10)),
       ]);
 
+  Widget partnerHomeScreen() {
+    final latest = cycles.isEmpty ? null : cycles.first;
+    return page([
+      PartnerDashboard(
+        today: DateTime.now(),
+        name: displayName ?? 'Profile',
+        partnerName: effectivePartnerName,
+        connected: link != null,
+        periodStart: latest == null
+            ? null : DateTime.parse(latest['start_date'] as String),
+        periodEnd: latest?['end_date'] == null
+            ? null : DateTime.parse(latest!['end_date'] as String),
+        nextPeriod: predictedNext,
+        reflectionCount: ratings.length,
+        onProfile: () => setState(() => tab = 3),
+        onConnection: () => setState(() => tab = 3),
+        onConnect: _openPairing,
+        onMessages: openPrivateRoom,
+        onNote: _openPartnerNote,
+        onInsights: () => setState(() => tab = 1),
+        onReflections: _openPartnerReflections,
+        onNickname: showEditNicknameDialog,
+      ),
+    ]);
+  }
+
+  Future<void> _openPartnerNote() async {
+    if (role != 'partner' || link == null) return;
+    await _showPartnerSheet(() => MomentComposer(
+      controller: noteDraft, style: noteStyle,
+      onStyleChanged: (value) => setState(() => noteStyle = value),
+      onSend: sendNote, busy: busy, senderName: displayName ?? 'Your partner',
+    ));
+  }
+
+  Future<void> _openPartnerReflections() async {
+    if (link == null) return;
+    await _showPartnerSheet(() => reflectionsCard(initiallyExpanded: true));
+  }
+
+  Future<void> _showPartnerSheet(Widget Function() content) => showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (sheetContext) => ListenableBuilder(
+      listenable: _stateRevision,
+      builder: (context, child) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheetContext).bottom),
+        child: SafeArea(top: false, child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: link == null
+            ? const Text('This connection has ended. Close this sheet to return home.')
+            : content(),
+        )),
+      ),
+    ),
+  );
+
   Widget momentsScreen() => page([
     AppPageHeading(eyebrow: '', title: 'Moments',
       subtitle: role == 'partner' && link != null ? 'For $effectivePartnerName' : null,
@@ -3484,13 +3543,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     ],
   ]);
 
-  Widget reflectionsCard() => Material(
+  Widget reflectionsCard({bool initiallyExpanded = false}) => Material(
     color: AppPalette.surface,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20),
         side: const BorderSide(color: AppPalette.border)),
     clipBehavior: Clip.antiAlias,
     child: ExpansionTile(
-      key: const PageStorageKey('moments-reflections'),
+      key: PageStorageKey(initiallyExpanded ? 'partner-reflections-sheet' : 'moments-reflections'),
+      initiallyExpanded: initiallyExpanded,
       leading: const Icon(Icons.star_border_rounded, color: plum),
       title: const Text('Shared reflections', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
       subtitle: const Text('Rate a day or add a note', style: TextStyle(fontSize: 12, color: AppPalette.muted)),
@@ -3898,17 +3958,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             tone: AppPalette.sage),
       ]);
 
+  Future<void> _openPairing() => Navigator.of(context).push<void>(MaterialPageRoute(
+    builder: (_) => ListenableBuilder(
+      listenable: _stateRevision,
+      builder: (context, _) => Scaffold(
+        appBar: AppBar(backgroundColor: cream),
+        body: SafeArea(child: pairingScreen()),
+      ),
+    ),
+  ));
+
   Widget pairingScreenContent() => Column(children: [
         if (link == null)
           button(
               'Open secure pairing',
-              () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => ListenableBuilder(
-                        listenable: _stateRevision,
-                        builder: (context, _) => Scaffold(
-                            appBar: AppBar(backgroundColor: cream),
-                            body: SafeArea(child: pairingScreen())),
-                      ))))
+              _openPairing)
         else
           card('Connected with ${ownerName ?? 'your partner'}', [
             const Text('Your private connection is active.'),
