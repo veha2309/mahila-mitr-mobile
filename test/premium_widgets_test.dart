@@ -43,6 +43,25 @@ void main() {
     expect(find.text('Update today’s check-in'), findsOneWidget);
   });
 
+  testWidgets('ongoing period does not show a later phase or next-period countdown', (tester) async {
+    await tester.pumpWidget(app(CycleTodayHero(
+      cycleDay: 12,
+      phase: 'Period in progress',
+      periodInProgress: true,
+      nextPeriodLabel: 'your next period',
+      daysToGo: null,
+      confidence: 'Building',
+      isCheckedIn: false,
+      reduceMotion: true,
+      onCheckIn: () {},
+    )));
+    expect(find.text('Period ongoing'), findsOneWidget);
+    expect(find.text('Period in progress'), findsOneWidget);
+    expect(find.text('Record an end date when your period ends.'), findsOneWidget);
+    expect(find.text('Get started'), findsNothing);
+    expect(find.text('Follicular phase'), findsNothing);
+  });
+
   testWidgets('animated tab stack preserves child state', (tester) async {
     var index = 0;
     late StateSetter update;

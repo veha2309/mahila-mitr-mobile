@@ -5,6 +5,10 @@ import 'year_calendar.dart';
 import 'home_widgets.dart';
 import 'app_navigation.dart';
 import 'dart:async';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:uuid/uuid.dart';
+import 'dashboard_store.dart';
+import 'cycle_calendar.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -22,6 +26,7 @@ import 'appearance_settings.dart';
 import 'app_design.dart';
 import 'premium_widgets.dart';
 import 'wellness_guide.dart';
+import 'logging_reminders.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -101,6 +106,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final reflection = TextEditingController();
   final displayNameInput = TextEditingController();
   final notifications = FlutterLocalNotificationsPlugin();
+  late final loggingReminders = LoggingReminders(notifications);
+  bool _pendingLogReminder = false;
+  bool _loggingDataReady = false;
   static const nearby = MethodChannel('mahila_mitr/nearby');
   Timer? nearbyTimer;
   Timer? nearbyPoll;
@@ -117,6 +125,70 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   RealtimeChannel? _linkChannel;
   String? _watchedLinkId;
   final ValueNotifier<int> _stateRevision = ValueNotifier<int>(0);
+  DashboardStore? _store;
+  Future<void>? _storeReady;
+  String? _loadedAccount;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  Timer? _syncRetry;
+  String? _syncingAccount;
+  bool _refreshAgain = false;
+  String? _syncNotice;
+
+  String? get _accountKey => session == null || role == null
+      ? null : DashboardStore.accountKey(session!.user.id, role!);
+
+  Future<void> _restoreDashboard() async {
+    final key = _accountKey;
+    if (key == null) return;
+    _storeReady ??= () async { _store = await DashboardStore.open(); }();
+    await _storeReady;
+    if (!mounted || key != _accountKey || _loadedAccount == key) return;
+    _loadedAccount = key;
+    final cached = _store!.snapshot(key);
+    if (cached != null) {
+      _applyDashboard(cached);
+      _loggingDataReady = true;
+      unawaited(_syncLoggingReminders());
+      _openPendingLogReminder();
+    }
+  }
+
+  void _applyDashboard(Map<String, dynamic> data) {
+    List<Map<String, dynamic>> rows(String field) =>
+        (data[field] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    setState(() {
+      link = data['link'] == null ? null : Map<String, dynamic>.from(data['link'] as Map);
+      cycles = rows('cycles'); dayLogs = rows('dayLogs');
+      ratings = rows('ratings'); notes = rows('notes');
+      displayName = data['displayName'] as String?;
+      partnerDisplayName = data['partnerDisplayName'] as String?;
+      partnerNickname = data['partnerNickname'] as String?;
+      myNickname = data['myNickname'] as String?;
+      ownerName = data['ownerName'] as String?;
+      profileChecked = true;
+      syncError = null;
+    });
+  }
+
+  Future<void> _saveLocal(String table, Map<String, dynamic> values,
+      {Map<String, dynamic>? existing, bool delete = false, String? conflict,
+      String? rpc}) async {
+    final key = _accountKey;
+    if (key == null) return;
+    await _restoreDashboard();
+    if (!mounted || key != _accountKey) return;
+    final row = <String, dynamic>{
+      ...?existing, ...values,
+      'id': existing?['id'] ?? values['id'] ?? const Uuid().v4(),
+    };
+    await _store!.enqueue(key, table, row, delete: delete, conflict: conflict, rpc: rpc);
+    if (!mounted || key != _accountKey) return;
+    _applyDashboard(_store!.snapshot(key)!);
+    setState(() => _syncNotice = 'Saved on this device · waiting to sync');
+    _loggingDataReady = true;
+    unawaited(_syncLoggingReminders());
+    unawaited(refresh());
+  }
 
   @override
   void setState(VoidCallback fn) {
@@ -221,17 +293,48 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     session = client?.auth.currentSession;
     authSubscription = client?.auth.onAuthStateChange.listen((event) {
       if (!mounted) return;
+      if (session?.user.id != event.session?.user.id) {
+        _loggingDataReady = false;
+        _loadedAccount = null;
+        _stopLinkRealtime();
+        _stopUnlinkedRealtime();
+        profileChecked = false;
+        link = null; cycles = []; dayLogs = []; ratings = []; notes = [];
+        displayName = null; ownerName = null; partnerDisplayName = null;
+        partnerNickname = null; myNickname = null;
+        _syncNotice = null; syncError = null;
+      }
       setState(() => session = event.session);
-      refresh();
+      if (event.session == null) _syncLoggingReminders();
+      if (event.event != AuthChangeEvent.tokenRefreshed || _syncNotice != null) {
+        refresh();
+      }
       _initFirebaseMessaging();
+    }, onError: (Object error, StackTrace stack) {
+      // A refresh-token request may fail offline without invalidating the
+      // restored session or hiding this account's saved dashboard.
+      if (mounted) {
+        setState(() => _syncNotice = 'Connection unavailable · showing saved data');
+      }
     });
     SharedPreferences.getInstance().then((prefs) {
       if (!mounted) return;
       setState(() => role = prefs.getString('role'));
       refresh();
     });
-    nearbyPoll = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (session != null && role != null && link == null) refresh();
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) {
+      if (!mounted) return;
+      if (results.any((value) => value != ConnectivityResult.none)) {
+        refresh(notify: true);
+      } else {
+        setState(() => _syncNotice = 'Offline · changes are saved on this device');
+      }
+    });
+    _syncRetry = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_isAppInForeground && session != null &&
+          (_syncNotice != null || link == null)) {
+        refresh();
+      }
     });
     _initializeNotifications();
     _initFirebaseMessaging();
@@ -259,8 +362,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           android: AndroidInitializationSettings('@mipmap/ic_launcher'),
           iOS: DarwinInitializationSettings(),
         ),
-        onDidReceiveNotificationResponse: (_) {
-          openPrivateRoom();
+        onDidReceiveNotificationResponse: (response) {
+          if (response.payload == LoggingReminders.payload) {
+            _pendingLogReminder = true;
+            refresh();
+          } else {
+            openPrivateRoom();
+          }
         },
       );
       final androidPlugin = notifications
@@ -282,10 +390,39 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await androidPlugin?.createNotificationChannel(channel);
 
       notificationsReady = true;
+      final launch = await notifications.getNotificationAppLaunchDetails();
+      if (launch?.didNotificationLaunchApp == true &&
+          launch?.notificationResponse?.payload == LoggingReminders.payload) {
+        _pendingLogReminder = true;
+      }
+      if (session == null || _loggingDataReady) _syncLoggingReminders();
+      _openPendingLogReminder();
     } catch (e) {
       debugPrint('Failed to initialize notifications: $e');
       notificationsReady = false;
     }
+  }
+
+  Future<void> _syncLoggingReminders() async {
+    if (!notificationsReady) return;
+    await loggingReminders.sync(
+      enabled: session != null && role == 'owner',
+      cycles: List.of(cycles),
+      logs: List.of(dayLogs),
+    );
+  }
+
+  void _openPendingLogReminder() {
+    if (!_pendingLogReminder || !mounted || !profileChecked ||
+        syncError != null || session == null || role != 'owner') {
+      return;
+    }
+    _pendingLogReminder = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && session != null && role == 'owner') {
+        showDayLogger(DateUtils.dateOnly(DateTime.now()));
+      }
+    });
   }
 
   Future<void> _initFirebaseMessaging() async {
@@ -377,6 +514,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _navigationPreview.dispose();
     WidgetsBinding.instance.removeObserver(this);
     authSubscription?.cancel();
+    _connectivitySubscription?.cancel();
+    _syncRetry?.cancel();
     _stopLinkRealtime();
     _stopUnlinkedRealtime();
     _stateRevision.dispose();
@@ -628,18 +767,52 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> refresh({bool notify = false}) async {
     final api = client;
-    if (api == null || session == null || role == null || refreshing) return;
+    final key = _accountKey;
+    final userId = session?.user.id;
+    final currentRole = role;
+    if (api == null || key == null || userId == null || currentRole == null) return;
+    try {
+      await _restoreDashboard();
+    } catch (error) {
+      _storeReady = null;
+      if (mounted && key == _accountKey) {
+        setState(() => syncError = 'Could not open saved data. Please retry.');
+      }
+      return;
+    }
+    if (!mounted || key != _accountKey) return;
+    if (_syncingAccount != null) {
+      _refreshAgain = true;
+      return;
+    }
+    _syncingAccount = key;
     refreshing = true;
     try {
+      await _store!.flush(key, (mutation) async {
+        if (key != _accountKey) throw StateError('Account changed');
+        final table = mutation['table'] as String;
+        final row = Map<String, dynamic>.from(mutation['row'] as Map);
+        if (mutation['rpc'] == 'open_note') {
+          await api.rpc('open_note', params: {'note_id': row['id']})
+              .timeout(const Duration(seconds: 15));
+        } else if (mutation['delete'] == true) {
+          await api.from(table).delete().eq('id', row['id']).timeout(const Duration(seconds: 15));
+        } else {
+          await api.from(table).upsert(row, onConflict: mutation['conflict'] as String,
+              ignoreDuplicates: table == 'notes')
+              .timeout(const Duration(seconds: 15));
+        }
+      }, isCurrentAccount: () => mounted && key == _accountKey);
+      if (!mounted || key != _accountKey) return;
       final profileRows = await api
           .from('profiles')
           .select('display_name')
-          .eq('id', session!.user.id)
-          .limit(1);
+          .eq('id', userId)
+          .limit(1).timeout(const Duration(seconds: 15));
       final linkRows = await api
           .from('links')
           .select('id,owner_id,partner_id,owner_nickname,partner_nickname')
-          .limit(1);
+          .limit(1).timeout(const Duration(seconds: 15));
       final nextLink =
           linkRows.isEmpty ? null : Map<String, dynamic>.from(linkRows.first);
       if (nextLink != null && nearbyAdvertising) {
@@ -653,35 +826,37 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         await nearby.invokeMethod<void>('stopScan');
         if (mounted) setState(() => nearbyScanning = false);
       }
-      final cycleRows = role == 'owner' || nextLink != null
+      final cycleRows = currentRole == 'owner' || nextLink != null
           ? await api
               .from('cycles')
               .select('id,start_date,end_date,flow,symptoms,notes')
-              .order('start_date', ascending: false)
+              .order('start_date', ascending: false).timeout(const Duration(seconds: 15))
           : <Map<String, dynamic>>[];
       final ratingRows = nextLink != null
           ? await api
               .from('date_ratings')
-              .select('id,author_id,date_on,stars,reflection')
+              .select('id,link_id,author_id,date_on,stars,reflection')
               .eq('link_id', nextLink['id'])
-              .order('date_on', ascending: false)
+              .order('date_on', ascending: false).timeout(const Duration(seconds: 15))
           : <Map<String, dynamic>>[];
-      final noteRows = role == 'owner'
+      final noteRows = currentRole == 'owner'
           ? await api
               .from('notes')
               .select('id,body,style,created_at,opened_at')
-              .order('created_at', ascending: false)
+              .order('created_at', ascending: false).timeout(const Duration(seconds: 15))
           : <Map<String, dynamic>>[];
       List<Map<String, dynamic>> dayLogRows = [];
+      var dayLogsLoaded = true;
       try {
-        if (role == 'owner' || nextLink != null) {
+        if (currentRole == 'owner' || nextLink != null) {
           final rows = await api
               .from('day_logs')
               .select('id,owner_id,date_on,mood,flow,energy,symptoms,note')
-              .order('date_on', ascending: false);
+              .order('date_on', ascending: false).timeout(const Duration(seconds: 15));
           dayLogRows = List<Map<String, dynamic>>.from(rows);
         }
       } catch (e) {
+        dayLogsLoaded = false;
         debugPrint('day_logs query skipped or table not created yet: $e');
       }
       String? nextPartnerDisplayName;
@@ -689,18 +864,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       String? nextMyNickname;
       if (nextLink != null) {
         final partnerUserId =
-            role == 'owner' ? nextLink['partner_id'] : nextLink['owner_id'];
+            currentRole == 'owner' ? nextLink['partner_id'] : nextLink['owner_id'];
         if (partnerUserId != null) {
           final pRows = await api
               .from('profiles')
               .select('display_name')
               .eq('id', partnerUserId)
-              .limit(1);
+              .limit(1).timeout(const Duration(seconds: 15));
           if (pRows.isNotEmpty) {
             nextPartnerDisplayName = pRows.first['display_name'] as String?;
           }
         }
-        if (role == 'owner') {
+        if (currentRole == 'owner') {
           nextPartnerNickname = nextLink['partner_nickname'] as String?;
           nextMyNickname = nextLink['owner_nickname'] as String?;
         } else {
@@ -711,27 +886,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final incoming = noteRows.any((item) =>
           item['opened_at'] == null &&
           !notes.any((old) => old['id'] == item['id']));
-      if (mounted) {
-        setState(() {
-          link = nextLink;
-          cycles = List<Map<String, dynamic>>.from(cycleRows);
-          ratings = List<Map<String, dynamic>>.from(ratingRows);
-          notes = List<Map<String, dynamic>>.from(noteRows);
-          dayLogs = dayLogRows;
-          displayName = profileRows.isEmpty
-              ? null
-              : profileRows.first['display_name'] as String?;
-          partnerDisplayName = nextPartnerDisplayName;
-          partnerNickname = nextPartnerNickname;
-          myNickname = nextMyNickname;
-          ownerName = nextPartnerNickname?.trim().isNotEmpty == true
+      if (mounted && key == _accountKey) {
+        await _store!.acceptRemote(key, {
+          'link': nextLink, 'cycles': cycleRows, 'ratings': ratingRows,
+          'notes': noteRows, 'dayLogs': dayLogsLoaded ? dayLogRows : dayLogs,
+          'displayName': profileRows.isEmpty ? null : profileRows.first['display_name'],
+          'partnerDisplayName': nextPartnerDisplayName,
+          'partnerNickname': nextPartnerNickname, 'myNickname': nextMyNickname,
+          'ownerName': nextPartnerNickname?.trim().isNotEmpty == true
               ? nextPartnerNickname!.trim()
               : (nextPartnerDisplayName?.trim().isNotEmpty == true
                   ? nextPartnerDisplayName!.trim()
-                  : 'Partner');
-          profileChecked = true;
-          syncError = null;
+                  : 'Partner'),
         });
+        if (!mounted || key != _accountKey) return;
+        _applyDashboard(_store!.snapshot(key)!);
+        setState(() => _syncNotice = _store!.pendingCount(key) > 0
+            ? 'Saved on this device · waiting to sync'
+            : dayLogsLoaded ? null : 'Daily logs could not refresh · showing saved data');
         // Start realtime subscription once we know the link id
         if (nextLink != null) {
           _stopUnlinkedRealtime();
@@ -741,20 +913,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _startUnlinkedRealtime();
         }
       }
-      if (notify && incoming && notificationsReady) {
+      if (mounted && key == _accountKey && notify && incoming && notificationsReady) {
         await _showDiscreetNotification();
       }
+      if (mounted && key == _accountKey && dayLogsLoaded) {
+        _loggingDataReady = true;
+        await _syncLoggingReminders();
+        _openPendingLogReminder();
+      }
     } catch (error) {
-      if (mounted) {
+      if (mounted && key == _accountKey) {
         setState(() {
-          profileChecked = true;
-          syncError =
-              'Could not load your profile and cycle settings. Run the latest Supabase migration, then retry.';
+          _syncNotice = error is PostgrestException
+              ? 'Sync needs attention: ${error.message}. Your changes are saved on this device.'
+              : 'Offline or service unavailable · changes are saved on this device';
+          if (!profileChecked) {
+            syncError = 'Connect to the internet to load this account for the first time.';
+          }
         });
       }
       debugPrint('Mahila Mitr refresh failed: $error');
     } finally {
       refreshing = false;
+      _syncingAccount = null;
+      if (_refreshAgain && mounted) {
+        _refreshAgain = false;
+        unawaited(refresh());
+      }
     }
   }
 
@@ -872,7 +1057,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           throw const FormatException(
               'Enter a name between 2 and 50 characters.');
         }
-        await client!.from('profiles').upsert({
+        await _saveLocal('profiles', {
           'id': session!.user.id,
           'display_name': value,
           'updated_at': DateTime.now().toUtc().toIso8601String(),
@@ -981,14 +1166,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
     if (confirmed != true) return;
     await action(() async {
-      await client!.from('cycles').insert({
+      await _saveLocal('cycles', {
         'owner_id': session!.user.id,
         'start_date': sqlDate(selectedStart),
         'end_date': null,
         'flow': 'medium',
         'symptoms': <String>[],
       });
-      await refresh();
     });
   }
 
@@ -1154,12 +1338,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
     if (confirmed != true) return;
     await action(() async {
-      await client!.from('cycles').update({
+      if (endDate.isBefore(start)) {
+        throw const FormatException('The end date cannot be before the start date.');
+      }
+      await _saveLocal('cycles', {
+        'owner_id': session!.user.id,
         'end_date': sqlDate(endDate),
         'flow': flow,
         'symptoms': symptoms.toList(),
-      }).eq('id', active['id']);
-      await refresh();
+      }, existing: active);
     });
   }
 
@@ -1328,8 +1515,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (saved == null) return;
     if (saved == false && existing != null) {
       await action(() async {
-        await client!.from('cycles').delete().eq('id', existing['id']);
-        await refresh();
+        await _saveLocal('cycles', {}, existing: existing, delete: true);
       });
       return;
     }
@@ -1342,12 +1528,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         'symptoms': symptoms.toList(),
         'notes': notes.isEmpty ? null : notes,
       };
-      if (existing == null) {
-        await client!.from('cycles').insert(values);
-      } else {
-        await client!.from('cycles').update(values).eq('id', existing['id']);
-      }
-      await refresh();
+      await _saveLocal('cycles', values, existing: existing);
     });
   }
 
@@ -1554,8 +1735,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (saved == null) return;
     if (saved == false && existing != null) {
       await action(() async {
-        await client!.from('day_logs').delete().eq('id', existing['id']);
-        await refresh();
+        await _saveLocal('day_logs', {}, existing: existing, delete: true);
       });
       return;
     }
@@ -1572,11 +1752,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         'note': noteText.isEmpty ? null : noteText,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
-      await client!.from('day_logs').upsert(
-            values,
-            onConflict: 'owner_id,date_on',
-          );
-      await refresh();
+      await _saveLocal('day_logs', values, existing: existing,
+          conflict: 'owner_id,date_on');
       saveCompleted = true;
     });
     if (saveCompleted &&
@@ -1768,17 +1945,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> sendNote() => action(() async {
         if (link == null || noteDraft.text.trim().isEmpty) return;
-        await client!.from('notes').insert({
+        await _saveLocal('notes', {
           'link_id': link!['id'],
           'sender_id': session!.user.id,
           'recipient_id': link!['owner_id'],
           'body': noteDraft.text.trim(),
           'style': noteStyle,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
         });
         noteDraft.clear();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Your note was sent.')));
+              const SnackBar(content: Text('Note saved. It will send when connected.')));
         }
       }, label: 'Sending note…');
   Future<void> rateDate() => action(() async {
@@ -1786,16 +1964,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         final today = DateUtils.dateOnly(DateTime.now())
             .toIso8601String()
             .substring(0, 10);
-        await client!.from('date_ratings').insert({
+        final previous = ratings.where((row) => row['link_id'] == link!['id'] &&
+            row['author_id'] == session!.user.id && row['date_on'] == today).firstOrNull;
+        await _saveLocal('date_ratings', {
           'link_id': link!['id'],
           'author_id': session!.user.id,
           'date_on': today,
           'stars': stars,
           'reflection':
               reflection.text.trim().isEmpty ? null : reflection.text.trim(),
-        });
+        }, existing: previous, conflict: 'link_id,author_id,date_on');
         reflection.clear();
-        await refresh();
       }, label: 'Saving reflection…');
   Future<void> openNote(Map<String, dynamic> note) async {
     final style = note['style'] as String? ?? 'letter';
@@ -1807,8 +1986,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
     if (note['opened_at'] == null) {
       await action(() async {
-        await client!.rpc('open_note', params: {'note_id': note['id']});
-        await refresh();
+        await _saveLocal('notes', {
+          'opened_at': DateTime.now().toUtc().toIso8601String(),
+        }, existing: note, rpc: 'open_note');
       });
     }
   }
@@ -1843,6 +2023,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     if (role == null) return roleScreen();
     if (session == null) return signInScreen();
+    if (syncError != null) return configurationErrorScreen();
     if (!profileChecked) {
       return const Scaffold(
           body: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -1850,7 +2031,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             Text('Loading your account…', style: TextStyle(color: AppPalette.muted)),
           ])));
     }
-    if (syncError != null) return configurationErrorScreen();
     if (displayName == null) return profileSetupScreen();
     final pages = role == 'owner'
         ? [homeScreen(), insightsScreen(), momentsScreen(), moreScreen()]
@@ -1881,7 +2061,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget page(List<Widget> children) => AppPage(children: children);
+  Widget page(List<Widget> children) => AppPage(children: [
+    if (session != null && profileChecked && _syncNotice != null)
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(children: [
+          const Icon(Icons.cloud_outlined, size: 18, color: plum),
+          const SizedBox(width: 8),
+          Expanded(child: Text(_syncNotice!, style: const TextStyle(fontSize: 12))),
+          TextButton(onPressed: () => refresh(), child: const Text('Retry')),
+        ]),
+      ),
+    ...children,
+  ]);
 
   Widget roleScreen() => Scaffold(
         body: SafeArea(
@@ -2030,11 +2222,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         body: SafeArea(
           child: page([
             const SizedBox(height: 42),
-            heading('Setup required', 'The latest database update is missing.',
+            heading('Your account', 'Saved data is unavailable.',
                 syncError),
-            card('Run this migration', [
-              const SelectableText(
-                  'supabase/20260916_profiles_cycle_logging.sql'),
+            card('Try again', [
               button('Retry', () => action(refresh, label: 'Loading your account…')),
             ]),
           ]),
@@ -2052,8 +2242,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         : today.difference(DateUtils.dateOnly(latestStart)).inDays + 1;
     final phase = cycleDay == null
         ? 'No periods logged'
-        : cycleDay <= averagePeriodLength
-            ? 'Menstrual phase'
+        : _activePeriod != null
+            ? 'Period in progress'
+            : isPeriodDay(today)
+                ? 'Menstrual phase'
             : cycleDay <= 13
                 ? 'Follicular phase'
                 : cycleDay <= 16
@@ -2079,6 +2271,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         cycleLength: averageCycleLength,
         onViewCalendar: () => setState(() => tab = 1),
         phase: phase,
+        periodInProgress: _activePeriod != null,
         nextPeriodLabel: next == null ? 'your next period' : formatDate(next),
         daysToGo: daysToGo,
         confidence: confidence,
@@ -3736,6 +3929,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             IOSFlutterLocalNotificationsPlugin>()
         ?.requestPermissions(alert: true, badge: true, sound: true);
     await _initFirebaseMessaging();
+    if (_loggingDataReady) await _syncLoggingReminders();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Notifications enabled')),
@@ -3745,6 +3939,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> signOut() => action(() async {
         await client!.auth.signOut();
+        await _syncLoggingReminders();
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove('role');
         setState(() {
@@ -3804,20 +3999,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return (100 - spread * 4).clamp(0, 100).toDouble();
   }
 
-  DateTime? get predictedNext => cycles.isEmpty
+  DateTime? get predictedNext => cycles.isEmpty || _activePeriod != null
       ? null
       : DateTime.parse(cycles.first['start_date'] as String)
           .add(Duration(days: averageCycleLength));
 
-  bool isPeriodDay(DateTime date) => cycles.any((cycle) {
-        final start = DateTime.parse(cycle['start_date'] as String);
-        final end = cycle['end_date'] == null
-            ? start.add(Duration(days: averagePeriodLength - 1))
-            : DateTime.parse(cycle['end_date'] as String);
-        return !date.isBefore(start) && !date.isAfter(end);
-      });
+  bool isPeriodDay(DateTime date) =>
+      isRecordedPeriodDay(cycles, date, today: DateTime.now());
 
   bool isPredictedDay(DateTime date) {
+    if (isPeriodDay(date)) return false;
     final next = predictedNext;
     return next != null &&
         !date.isBefore(next) &&
@@ -3825,6 +4016,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   bool isFertileWindowDay(DateTime date) {
+    if (isPeriodDay(date)) return false;
     if (cycles.isEmpty) return false;
     final next = predictedNext;
     if (next == null) return false;

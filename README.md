@@ -60,7 +60,9 @@ Apply [`supabase/schema.sql`](supabase/schema.sql) in the Supabase SQL editor, f
 
 All migration files are in [`supabase/`](supabase/). For an existing database, apply only migrations it has not received. The read-triggered expiry migration is required for this client.
 
-Configure SMTP for partner accounts and public users. In **Authentication → Email Templates → Magic Link**, include `{{ .Token }}` so the email contains the code accepted by the app. If a request fails or email does not arrive, check Supabase Auth logs and your SMTP settings.
+Configure SMTP for partner accounts and public users. In **Authentication → Emails → Templates**, configure **both Confirm sign up and Magic link or OTP** to send `{{ .Token }}` instead of a `{{ .ConfirmationURL }}` link. `signInWithOtp` uses the signup template for new accounts and the sign-in template for existing accounts. Updating only Magic Link leaves new users receiving a confirmation link that redirects to the project's Site URL (the admin website).
+
+Use subject **Your Mahila Mitr verification code** and copy [`supabase/templates/email-otp.html`](supabase/templates/email-otp.html) into both template bodies. Save each template in the hosted dashboard; adding the file here or running SQL migrations does not update hosted Auth email settings. Keep the email OTP length at **8 digits** to match the app's code input. Request a fresh code after changing templates; previously sent emails are unchanged. Verify both a new-account signup and an existing-account sign-in by entering the emailed code in the app. If a request fails or email does not arrive, check Supabase Auth logs and your SMTP settings.
 
 ```sh
 flutter run
@@ -114,6 +116,14 @@ Tests cover responsive screens, enlarged text, note layouts, loading states, cal
 For isolated PostgreSQL regression checks, install `@electric-sql/pglite` into a temporary directory and run `node test/read_expiry_database_test.cjs <path-to-package>`. These tests use an in-memory database and crypto stubs, never a live project.
 
 ## Privacy and current limits
+
+The dashboard restores its last saved snapshot from encrypted Hive storage before refreshing Supabase in the background. Period entries (including start, end, edit, and delete), daily logs, profile names, shared reflections, and notes are saved locally with a persistent sync queue. The app retries when connectivity returns, on resume, and every 30 seconds while open if a sync is pending. A network connection alone does not count as a successful sync; failed writes remain queued and a status message shows when retry is needed. Pending local edits take precedence over background fetches. Data and queues are isolated by account and role; signing out keeps unsynced data for that same account's next sign-in. Android backup is disabled so encrypted files are not restored without their device key.
+
+First-time sign-in/account loading, partner pairing, and private chat require connectivity. The sync queue runs while the app is open; reopening the app resumes pending uploads. Concurrent edits on different devices use the last successfully uploaded value. Open periods stay recorded through today until an explicit end date is saved; phase and fertile-window estimates pause while the latest period is open.
+
+Owners receive a discreet daily check-in reminder around 8 PM device-local time while their latest period has no end date and that day has no daily log. Any saved daily log (including no flow) suppresses that day's reminder. Ending/deleting the period or signing out clears the reminders on the next successful local sync. Tapping a reminder opens today's daily logger after sign-in and data loading. Notification permission is required.
+
+The app schedules 30 days ahead and refreshes the schedule after successful data loads, including saves and app resume. Reminders work while the app is closed; Android may delay delivery under power restrictions. Changes made on another device take effect after this device syncs. Reopening the app also recalculates times after a timezone change. Reminders do not continue beyond the scheduling window without another sync.
 
 Pairing shares period history with the linked partner; the pairing flow discloses that access. Chat is encrypted on the server before storage, **not end-to-end encrypted**. The authorized server function can decrypt it.
 

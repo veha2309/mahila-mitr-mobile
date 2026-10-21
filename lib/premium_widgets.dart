@@ -145,6 +145,7 @@ class CycleTodayHero extends StatelessWidget {
     this.guide = const SizedBox.shrink(),
     this.cycleLength = 28,
     this.onViewCalendar,
+    this.periodInProgress = false,
     super.key,
   });
 
@@ -159,6 +160,7 @@ class CycleTodayHero extends StatelessWidget {
   final Widget guide;
   final int cycleLength;
   final VoidCallback? onViewCalendar;
+  final bool periodInProgress;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -240,7 +242,7 @@ class CycleTodayHero extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                    daysToGo == null
+                    periodInProgress ? 'Period ongoing' : daysToGo == null
                         ? 'Get started'
                         : daysToGo! < 0
                             ? 'Update due'
@@ -255,7 +257,7 @@ class CycleTodayHero extends StatelessWidget {
                         color: AppPalette.ink)),
                 const SizedBox(height: 6),
                 Text(
-                    daysToGo == null
+                    periodInProgress ? 'Until you mark it ended' : daysToGo == null
                         ? 'Add your last period'
                         : 'Next period estimate',
                     style:
@@ -302,7 +304,7 @@ class CycleTodayHero extends StatelessWidget {
               const SizedBox(width: 9),
               Expanded(
                   child: Text(
-                      daysToGo == null
+                      periodInProgress ? 'Record an end date when your period ends.' : daysToGo == null
                           ? 'Log your first period to see an estimate.'
                           : 'Next period · $nextPeriodLabel',
                       style: const TextStyle(
