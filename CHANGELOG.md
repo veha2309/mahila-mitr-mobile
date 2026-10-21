@@ -5,9 +5,10 @@
 - Replaced Partner Home's pairing-management screen with a dedicated dashboard for shared cycle timing, messages, notes, and reflections.
 - Added direct note and reflection sheets, connection settings, and nickname actions.
 - Added an unconnected-partner introduction and layouts for small screens, long names, and enlarged text.
+- Added Android double-back-to-close at the main screen, with a two-second confirmation window and normal navigation for child screens and sheets.
 - Kept cycle dates read-only for partners and handled missing history, ongoing periods, stale estimates, and future entries.
 
-Validation: clean Dart analysis, 99 passing regression tests, rendered UI previews, and a signed Android release build. Version remains 1.1.0; Android version code increases to 3 using the existing release signing key.
+Validation: clean Dart analysis, 106 passing regression tests, rendered UI previews, and a signed Android release build. Version remains 1.1.0; Android version code increases to 3 using the existing release signing key.
 
 ## 1.1.0 (build 2) — 2026-10-21
 

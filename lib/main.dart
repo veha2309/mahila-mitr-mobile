@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import 'dashboard_store.dart';
 import 'cycle_calendar.dart';
 import 'partner_dashboard.dart';
+import 'double_back_to_close.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -88,7 +89,7 @@ class _MahilaMitrState extends State<MahilaMitr> {
                 appearance.effective == VisualEffects.reduced || appearance.effective == VisualEffects.off),
                 child: AppActivityOverlay(controller: activity, child: child!));
             }))),
-        home: const HomePage(),
+        home: const DoubleBackToClose(child: HomePage()),
       );
 }
 

@@ -97,6 +97,8 @@ Back up `android/key.properties` and `android/app/mahila-mitr-release.keystore` 
 
 Partner Home now has its own dashboard with a shared-cycle summary, direct message and note actions, and shared reflections. Unconnected partners get a pairing introduction instead. Cycle dates remain read-only for partners; connection management stays in Settings. Notes and reflections reuse the existing composers and sync behavior.
 
+On Android, press Back twice within two seconds at the main screen to close the app. The first press displays a prompt. Child screens and sheets close normally; dismissing the keyboard or backgrounding the app resets the exit confirmation.
+
 ```sh
 flutter analyze
 flutter test test packages/platform_glass_navigation/test
