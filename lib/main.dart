@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:uuid/uuid.dart';
 import 'dashboard_store.dart';
+import 'note_sync.dart';
 import 'cycle_calendar.dart';
 import 'partner_dashboard.dart';
 import 'double_back_to_close.dart';
@@ -799,9 +800,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               .timeout(const Duration(seconds: 15));
         } else if (mutation['delete'] == true) {
           await api.from(table).delete().eq('id', row['id']).timeout(const Duration(seconds: 15));
+        } else if (table == 'notes') {
+          await insertPendingNote(api, row);
         } else {
-          await api.from(table).upsert(row, onConflict: mutation['conflict'] as String,
-              ignoreDuplicates: table == 'notes')
+          await api.from(table).upsert(row, onConflict: mutation['conflict'] as String)
               .timeout(const Duration(seconds: 15));
         }
       }, isCurrentAccount: () => mounted && key == _accountKey);

@@ -483,11 +483,10 @@ packages:
   liquid_retina_navigation:
     dependency: "direct main"
     description:
-      path: "."
-      ref: "v0.1.0"
-      resolved-ref: ffc42735810112ef526916dcd94d11f0cd5017a9
-      url: "https://github.com/veha2309/liquid_retina_navigation.git"
-    source: git
+      name: liquid_retina_navigation
+      sha256: fb6a9c0488938c501bc87f8d69fb4106c35451716963757fbfbbfc41729cea21
+      url: "https://pub.dev"
+    source: hosted
     version: "0.1.0"
   logging:
     dependency: transitive
